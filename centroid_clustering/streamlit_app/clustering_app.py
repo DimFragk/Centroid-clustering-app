@@ -413,7 +413,7 @@ def main():
             tab_setting=None,
         ),
         sts.PageTab(
-            tab_name="Target metrics comparison",
+            tab_name="Metrics comparison with target labels",
             tab_page=specific_k_cluster_target_labels_comp,
             tab_icon="arrows-angle-contract",
             tab_setting=None,

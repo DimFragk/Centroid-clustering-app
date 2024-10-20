@@ -1,8 +1,8 @@
 [theme]
-primaryColor="#E82736"
-backgroundColor="#080808"
-secondaryBackgroundColor="#1A1A18"
-textColor="#F1EDED"
+primaryColor="#BD5656"
+backgroundColor="#0D1117"
+secondaryBackgroundColor="#1E232F"
+textColor="#E6EDF3"
 
 [runner]
 magicEnabled = false
