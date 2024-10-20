@@ -1,6 +1,7 @@
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
+
 from typing import Callable, Literal
 
 from utils.data_processing import standardize_sr, min_max_scale_sr

@@ -1,30 +1,23 @@
 import pandas as pd
 import numpy as np
 from numba import njit, prange
-from dataclasses import dataclass
-from typing import Optional, Callable
-
+from kmedoids import KMedoidsResult
 from sklearn.metrics import silhouette_samples, calinski_harabasz_score
 from sklearn.preprocessing import LabelEncoder
-
 from scipy.spatial.distance import pdist, cdist, squareform
-from scipy.spatial.distance import braycurtis, correlation, cosine, jensenshannon
-from scipy.spatial.distance import canberra, chebyshev
+from scipy.spatial.distance import braycurtis, correlation, cosine, jensenshannon, canberra, chebyshev
 from scipy.spatial.distance import sqeuclidean, euclidean, cityblock
 from scipy.spatial import distance_matrix
 
-from kmedoids import KMedoidsResult
+from dataclasses import dataclass
+from typing import Optional, Callable
 
 from utils import general_functions as mf
 import utils.math_functions as gmf
 import utils.pandas_functions as gpd
-from utils.general_functions import print_execution_time
-
-
 # import utils.data_processing as gdp
 # import utils.visualization_functions as gvp
 # import Read_Excel as rxl
-
 
 class DistFunction:
 

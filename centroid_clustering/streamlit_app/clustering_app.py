@@ -1,5 +1,6 @@
 import numpy as np
 import streamlit as st
+
 from typing import Callable
 from functools import partial
 

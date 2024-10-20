@@ -1,19 +1,14 @@
-import math
-import re
-
 import pandas as pd
 import numpy as np
-from functools import partial
-
 from sklearn.cluster import KMeans
 from sklearn.datasets import load_iris, make_blobs
-
 from scipy.optimize import curve_fit
 from scipy import odr
-
 import plotly.graph_objects as go
-
 from kmedoids import fasterpam
+
+import math
+from functools import partial
 
 import utils.general_functions as mf
 import utils.math_functions as gmf

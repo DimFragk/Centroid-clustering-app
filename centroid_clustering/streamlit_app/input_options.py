@@ -1,13 +1,12 @@
-import math
-from io import BytesIO
-from openpyxl import load_workbook
-from os.path import isfile
-
 import pandas as pd
 import numpy as np
 import streamlit as st
-
+from openpyxl import load_workbook
 from sklearn.datasets import make_classification, make_blobs
+
+import math
+from io import BytesIO
+from os.path import isfile
 
 from utils.general_functions import list_of_names_in_list
 from utils.math_functions import linspace_list

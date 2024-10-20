@@ -1,0 +1,10 @@
+pandas
+numpy
+scipy
+scikit-learn
+kmedoids
+streamlit
+streamlit-option-menu
+plotly
+openpyxl
+numba
