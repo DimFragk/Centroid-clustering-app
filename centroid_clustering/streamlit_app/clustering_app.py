@@ -409,7 +409,7 @@ def main():
         sts.PageTab(
             tab_name="3d plot comparison with target labels",
             tab_page=dim_redux_3d_plots_target_labels_comp,
-            tab_icon="menu-app-fill",
+            tab_icon="transparency",
             tab_setting=None,
         ),
         sts.PageTab(

@@ -208,12 +208,17 @@ def create_n_cl_metrics_plotly_multy_line_charts(
                 st.dataframe(pam_n_cl_obj.n_cl_metrics)
 
 
-def specific_k_cluster_target_labels_comp(data_obj: ClRes):
+def specific_k_cluster_target_labels_comp(data_obj: ClRes, st_key=None):
     input_obj = data_obj.input_obj
     cl_stg_obj_dict = data_obj.cl_stg_obj_dict
 
+    st_key = st_key if st_key is not None else data_obj.input_obj.f_name
+
     n_cl_method_key = st.selectbox(
-        label="Select centroid_clustering method", options=list(cl_stg_obj_dict.keys()), index=len(cl_stg_obj_dict.keys()) - 1
+        label="Select clustering method",
+        options=list(cl_stg_obj_dict.keys()),
+        index=len(cl_stg_obj_dict.keys()) - 1,
+        key=st_key
     )
     n_cl_s_obj = cl_stg_obj_dict[n_cl_method_key]
 
@@ -239,17 +244,21 @@ def specific_k_clusters_results(
         pam_n_cl_obj: pam.ClSelect,
         kms_n_cl_obj: pam.ClSelect | pam.ClMetrics | None = None,
         pam_name=None,
-        kms_name=None
+        kms_name=None,
+        st_key=None
 ):
     kms_true = kms_n_cl_obj is not None
     pam_name = "K-medoids" if pam_name is None else pam_name
     kms_name = "K-means" if kms_name is None else kms_name
 
+    st_key = st_key if st_key is not None else f"specific_k_clusters_results for: {pam_name}-{kms_name}"
+
     c1, c2 = st.columns(2)
 
     n_cl_slt = c1.selectbox(
         label="Select number of clusters",
-        options=list(pam_n_cl_obj.res_n_cl_obj_dict.keys())  # list(range(min_n_cl, max_n_cl + 1))
+        options=list(pam_n_cl_obj.res_n_cl_obj_dict.keys()),  # list(range(min_n_cl, max_n_cl + 1))
+        key=f"n_cl_slt: {st_key}"
     )
     pam_obj_to_show: pam.ClMetrics = pam_n_cl_obj.res_n_cl_obj_dict[n_cl_slt]
 
@@ -265,10 +274,17 @@ def specific_k_clusters_results(
 
     metric_names = list(pam_obj_to_show.samples_metrics_df.columns)
     samples_metric_slt = c2.selectbox(
-        label="Select samples metric", options=metric_names
+        label="Select samples metric", options=metric_names, key=f"samples_metric_slt: {st_key}"
     )
 
-    show_cl_m_obj_res(samples_metric_slt, pam_obj_to_show, kms_obj_to_show, pam_name, kms_name)
+    show_cl_m_obj_res(
+        samples_metric=samples_metric_slt,
+        pam_obj_to_show=pam_obj_to_show,
+        kms_obj_to_show=kms_obj_to_show,
+        pam_name=pam_name,
+        kms_name=kms_name,
+        st_key=st_key
+    )
 
 
 def show_cl_m_obj_res(
@@ -276,9 +292,13 @@ def show_cl_m_obj_res(
         pam_obj_to_show: pam.ClMetrics,
         kms_obj_to_show: pam.ClMetrics,
         pam_name: str,
-        kms_name: str
+        kms_name: str,
+        st_key=None
 ):
     kms_true = kms_obj_to_show is not None
+
+    st_key_default = f"show_cl_m_obj_res for metric(samples_metric): {pam_name}-{kms_name}"
+    st_key = f"{st_key}{st_key_default}" if st_key is not None else f"{st_key_default}"
 
     if kms_true:
         s_tab, g_tab, d_tab, c_tab = st.tabs(["Samples graphs", "Clusters graphs", "Data tables", "Crosstab"])
@@ -299,9 +319,9 @@ def show_cl_m_obj_res(
             """
             return set_up_h_bar_chart(sorted_df[metric_slt], flip_color=True)
 
-        def show_samples_charts(name, clm_obj, metric_slt):
+        def show_samples_charts(name:str, clm_obj:pam.ClMetrics, metric_slt:str):
             st.caption(name)
-            st.plotly_chart(rtn_chart(clm_obj, metric_slt))
+            st.plotly_chart(rtn_chart(clm_obj, metric_slt), key=f"{st_key}:{name}:{metric_slt}")
 
         if kms_true:
             c1, c2 = st.columns(2)
@@ -316,7 +336,7 @@ def show_cl_m_obj_res(
         def show_cluster_charts(name, clm_obj):
             st.caption(name)
             data_df = clm_obj.cluster_metrics_df.apply(lambda x: x / x.max())
-            st.plotly_chart(set_up_h_bar_chart(data_df, axis=1, flip_color=True))
+            st.plotly_chart(set_up_h_bar_chart(data_df, axis=1, flip_color=True), key=f"{st_key}:{name}")
 
         if kms_true:
             c1, c2 = st.columns(2)
@@ -331,10 +351,10 @@ def show_cl_m_obj_res(
         c1, c2 = st.columns(2)
         c1.caption(pam_name)
         c2.caption(kms_name)
-        c1.dataframe(pam_obj_to_show.cluster_metrics_df)
-        c2.dataframe(kms_obj_to_show.cluster_metrics_df) if kms_true else None
-        c1.dataframe(pam_obj_to_show.samples_metrics_df)
-        c2.dataframe(kms_obj_to_show.samples_metrics_df) if kms_true else None
+        c1.dataframe(pam_obj_to_show.samples_metrics_df, use_container_width=True)
+        c2.dataframe(kms_obj_to_show.samples_metrics_df, use_container_width=True) if kms_true else None
+        c1.dataframe(pam_obj_to_show.cluster_metrics_df, use_container_width=True)
+        c2.dataframe(kms_obj_to_show.cluster_metrics_df, use_container_width=True) if kms_true else None
 
     if kms_true:
         with c_tab:
@@ -376,7 +396,13 @@ def all_metrics_data_charts(n_cl_obj):
         ))
 
 
-def show_3d_plots(data_df: pd.DataFrame, labels_sr: pd.Series, select_redux: Literal["PCA", "LDA"], name: str = None):
+def show_3d_plots(
+        data_df: pd.DataFrame,
+        labels_sr: pd.Series,
+        select_redux: Literal["PCA", "LDA"],
+        name: str = None,
+        st_key=None
+):
     # if not list_val_df it returns the df unchanged
     # pam_data = explode_list_val_df(pam_n_cl_obj.data)
     if select_redux == "LDA":
@@ -396,7 +422,7 @@ def show_3d_plots(data_df: pd.DataFrame, labels_sr: pd.Series, select_redux: Lit
         labels=labels_sr,
         select_redux=select_redux
     )
-    st.plotly_chart(fig1, use_container_width=True, theme="streamlit")
+    st.plotly_chart(fig1, use_container_width=True, theme="streamlit", key=st_key)
     if name:
         st.caption(f"{name} graph")
 
@@ -406,7 +432,9 @@ def dim_redux_3d_plots_target_labels_comp(data_obj: ClRes):
     cl_stg_obj_dict = data_obj.cl_stg_obj_dict
 
     n_cl_method_key = st.selectbox(
-        label="Select centroid_clustering method", options=list(cl_stg_obj_dict.keys()), index=len(cl_stg_obj_dict.keys()) - 1
+        label="Select clustering method",
+        options=list(cl_stg_obj_dict.keys()),
+        index=len(cl_stg_obj_dict.keys()) - 1
     )
     n_cl_s_obj = cl_stg_obj_dict[n_cl_method_key]
 
@@ -426,17 +454,24 @@ def dim_reduction_3d_plots(
         pam_n_cl_obj: pam.ClSelect,
         kms_n_cl_obj: pam.ClSelect | pd.Series | None = None,
         pam_name=None,
-        kms_name=None
+        kms_name=None,
+        st_key=None
 ):
     pam_name = "K-medoids" if pam_name is None else pam_name
     kms_name = "K-means" if kms_name is None else kms_name
 
+    st_key = st_key if st_key is not None else f"dim_reduction_3d_plots: ({pam_name})-({kms_name})"
+
     col_1, col_2 = st.columns((1, 1))
     with col_1:
-        select_n_cl = st.selectbox(label="Number of n_clusters", options=pam_n_cl_obj.labels_df.columns)
+        select_n_cl = st.selectbox(
+            label="Number of n_clusters", options=pam_n_cl_obj.labels_df.columns, key=f"n_cl for:{st_key}"
+        )
         con1 = st.container()
     with col_2:
-        select_redux = st.selectbox(label="Dimension reduction method", options=["PCA", "LDA"])
+        select_redux = st.selectbox(
+            label="Dimension reduction method", options=["PCA", "LDA"], key=f"dim_redux_for: {st_key}"
+        )
         con2 = st.container()
 
     def show_3d_plots_p(n_cl_obj, name):
@@ -446,7 +481,8 @@ def dim_reduction_3d_plots(
             data_df=n_cl_obj.data,
             labels_sr=n_cl_obj.labels_df[select_n_cl],
             select_redux=select_redux,
-            name=name
+            name=name,
+            st_key=f"plotly_chart for: {name}-{st_key}"
         )
 
     if kms_n_cl_obj is not None:
@@ -574,7 +610,7 @@ def cluster_tab_results(
     if "Single fitting curve graph check" in slt_list:
         with st.expander("See fitting results for single curve"):
             if kms_true:
-                n_cl_ob_toggle = st.toggle(label="Show k-means instead of k-medoids", value=False)
+                n_cl_ob_toggle = st.toggle(label=f"Show {kms_name} instead of {pam_name}", value=False)
                 n_cl_obj = kms_n_cl_obj if n_cl_ob_toggle else pam_n_cl_obj
             else:
                 n_cl_obj = pam_n_cl_obj

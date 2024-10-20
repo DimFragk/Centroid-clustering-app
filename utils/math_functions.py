@@ -159,3 +159,25 @@ def linspace_list(start, stop, num, endpoint=True, retstep=False):
         return res, step
 
     return res
+
+
+@njit(fastmath=True, parallel=True)
+def trapezoid_area_fn_diff(y_1, y_2, dx=1):
+    area_dif = 0
+    for x in prange(len(y_1) - 1):
+        ac_len = y_1[x] - y_2[x]
+        db_len = y_1[x + 1] - y_2[x + 1]
+        lb1 = 1 if ac_len > 0 else -1
+        lb2 = 1 if db_len > 0 else -1
+        ac_len = abs(ac_len)
+        db_len = abs(db_len)
+        if lb1 * lb2 > 0:
+            area_dif += 0.5 * (ac_len + db_len) * dx
+        else:
+            ad_len = abs(y_1[x] - y_1[x + 1])
+            bc_len = abs(y_2[x] - y_2[x + 1])
+            xp = ac_len / (ad_len + bc_len)
+            # area_dif += 0.5 * abs(ac_len) * xp * dx + 0.5 * (1 - xp) * abs(db_len) * dx
+            area_dif += 0.5 * (ac_len * xp + db_len - xp * db_len) * dx
+
+    return area_dif

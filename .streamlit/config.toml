@@ -1,0 +1,11 @@
+[theme]
+primaryColor="#E82736"
+backgroundColor="#080808"
+secondaryBackgroundColor="#1A1A18"
+textColor="#F1EDED"
+
+[runner]
+magicEnabled = false
+
+[server]
+fileWatcherType = "auto"

@@ -1,8 +1,10 @@
 import pandas as pd
 import numpy as np
+
 from dataclasses import dataclass
 from typing import Optional, Callable, Literal
 import re
+import time
 
 
 @dataclass
@@ -59,6 +61,17 @@ class MetricsTree:
 
         weights_list = list(np.array(weights_list) * (self.percent / sum_of_w))
         return m_names, weights_list
+
+
+def print_execution_time(func):
+    def wrapper(*args, **kwargs):
+        begin = time.time()
+        res = func(*args, **kwargs)
+        end = time.time()
+        print("Total time taken in : ", func.__name__, end - begin)
+        return res
+
+    return wrapper
 
 
 def type_check(class_instance, class_to_check):
