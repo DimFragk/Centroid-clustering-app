@@ -3,10 +3,10 @@ import streamlit as st
 import plotly.graph_objects as go
 from typing import Callable, Literal
 
-from centroid_clustering.utils.data_processing import standardize_sr, min_max_scale_sr
-from centroid_clustering.utils.visualization_functions import set_up_h_bar_chart, set_up_3d_graph_data
-from centroid_clustering.utils.general_functions import type_check
-from centroid_clustering.utils.streamlit_functions import multiselect_submit, multiline_chart_from_df_columns, dec_key
+from utils.data_processing import standardize_sr, min_max_scale_sr
+from utils.visualization_functions import set_up_h_bar_chart, set_up_3d_graph_data
+from utils.general_functions import type_check
+from utils.streamlit_functions import multiselect_submit, multiline_chart_from_df_columns, dec_key
 
 from .app_classes import ClSettings, ClRes
 from .. import clustering_selection as pam

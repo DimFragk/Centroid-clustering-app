@@ -6,7 +6,7 @@ from typing import Callable
 from functools import partial
 
 from centroid_clustering import clustering_selection as pam
-from centroid_clustering.utils import streamlit_functions as Ui
+from utils import streamlit_functions as Ui
 
 
 @dataclass(slots=True)

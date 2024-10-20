@@ -208,7 +208,7 @@ class ClSelect:
 
     @staticmethod
     def merge_dfs_and_sort(df_old, df_new, axis=1, ascending=True):
-        if isinstance(df_old, pd.DataFrame) and df_old.empty:
+        if isinstance(df_old, (pd.DataFrame, pd.Series)) and df_old.empty:
             return df_new
         elif df_old is None:
             return df_new
@@ -223,11 +223,12 @@ class ClSelect:
 
         n_cl_metrics = mf.extract_series_from_obj_dict(res_n_cl_obj_dict, var_name="metrics_sr", axis=0)
 
-        n_cl_metrics = cls.merge_dfs_and_sort(
-            df_old=n_cl_metrics_old[list(n_cl_metrics.columns)],
-            df_new=n_cl_metrics,
-            axis=0
-        )
+        if isinstance(n_cl_metrics_old, pd.DataFrame) and not n_cl_metrics_old.empty:
+            n_cl_metrics = cls.merge_dfs_and_sort(
+                df_old=n_cl_metrics_old[list(n_cl_metrics.columns)],
+                df_new=n_cl_metrics,
+                axis=0
+            )
 
         if calc_elbow:
             n_cl_metrics["Inertia elbow"] = cls.calc_inertia_angles(n_cl_metrics["Inertia"])
@@ -243,7 +244,7 @@ class ClSelect:
         labels_df = mf.extract_series_from_obj_dict(res_n_cl_obj_dict, var_name="labels").T
 
         print("pam_Line_1144")
-        print(pd.DataFrame([obj.__dict__["labels"].rename(key) for key, obj in res_n_cl_obj_dict.items()]).T)
+        print(pd.DataFrame([getattr(obj, "labels").rename(key) for key, obj in res_n_cl_obj_dict.items()]).T)
         print(labels_df)
         # self.labels_df = mf.concat_dfs_axis_and_sort(self.labels_df, new_labels, axis=1)
         self.labels_df = self.merge_dfs_and_sort(df_old=self.labels_df, df_new=labels_df, axis=1)

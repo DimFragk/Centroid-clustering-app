@@ -6,9 +6,9 @@ from functools import partial
 # from centroid_clustering.src import clustering_selection as pam
 from centroid_clustering import clustering_selection as pam
 
-from centroid_clustering.utils.general_functions import def_var_value_if_none, rtn_dict_update, type_check
-import centroid_clustering.utils.streamlit_functions as Ui
-import centroid_clustering.utils.streamlit_app_stracture as sts
+from utils.general_functions import def_var_value_if_none, rtn_dict_update, type_check
+import utils.streamlit_functions as Ui
+import utils.streamlit_app_stracture as sts
 
 from .app_classes import PAMInput, ClRes, ClStgKmeans, ClStgFasterPam, ClStgCustomKMedoids
 from .result_pages import dim_redux_3d_plots_target_labels_comp, specific_k_cluster_target_labels_comp
@@ -383,7 +383,7 @@ def home_page():
             """
         )
 
-    win_f_path = """centroid_clustering/input_excel_templates/clustering_input_template.xlsx"""
+    win_f_path = """excel_templates_clustering/clustering_input_template.xlsx"""
 
     with open(win_f_path, "rb") as template_file:
         template_byte = template_file.read()

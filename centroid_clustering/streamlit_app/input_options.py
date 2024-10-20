@@ -9,14 +9,14 @@ import streamlit as st
 
 from sklearn.datasets import make_classification, make_blobs
 
-from .. import clustering_selection as pam
-
-from centroid_clustering.utils.general_functions import list_of_names_in_list
-from centroid_clustering.utils.math_functions import linspace_list
-from centroid_clustering.utils.pandas_functions import check_col_dtype
+from utils.general_functions import list_of_names_in_list
+from utils.math_functions import linspace_list
+from utils.pandas_functions import check_col_dtype
 
 from .app_classes import PAMInput
 from .result_pages import show_3d_plots
+
+from .. import clustering_selection as pam
 
 
 def pam_input_from_single_df(samples_df: pd.DataFrame):
@@ -452,7 +452,7 @@ def write_dataframe_to_excel(
             dframe.to_excel(xl_wr, sheet_name=sh_name, startrow=start_row, startcol=start_col)
 
     def pd_xl_writer(mode="w", if_sheet_exists=None):
-        return pd.ExcelWriter(full_file_path, mode=mode, if_sheet_exists=if_sheet_exists, engine='xlsxwriter')
+        return pd.ExcelWriter(full_file_path, mode=mode, if_sheet_exists=if_sheet_exists)
 
     if not isinstance(full_file_path, BytesIO) and isfile(full_file_path):
         if overwrite is False:
