@@ -1,13 +1,10 @@
-# from __future__ import annotations
 import math
 import re
 
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 from functools import partial
 
-from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from sklearn.datasets import load_iris, make_blobs
 
@@ -31,7 +28,8 @@ else:
     from .custom_k_medoids import Kmedoids
     from .clustering_metrics import DistFunction, ClMetrics
 
-import warnings
+# from __future__ import annotations
+# import warnings
 # warnings.simplefilter(action='ignore', category=FutureWarning)
 
 
@@ -164,14 +162,12 @@ class ClSelect:
         self.n_cl_m_r_delta: pd.DataFrame | None = None
         self.m_func_fit_difs: pd.DataFrame | None = None
         self.n_cl_m_fig: dict[str, go.Figure] = {}
+        # self.create_curve_fit_data_for_n_cl_metrics()
+        self.create_pol_fit_data_for_n_cl_metrics(n_cl_metrics=self.n_cl_metrics[self.metrics_for_fitting])
 
         self.n_cl_score: pd.Series | None = None
         self.selected_n_cl_str: str | None = None
         self.selected_n_cl: int | None = None
-
-        # self.create_curve_fit_data_for_n_cl_metrics()
-        self.create_pol_fit_data_for_n_cl_metrics(n_cl_metrics=self.n_cl_metrics[self.metrics_for_fitting])
-
         self.selecting_num_of_clusters()
 
     def __repr__(self):
@@ -180,9 +176,6 @@ class ClSelect:
         clm_name = mf.get_dict_0key_val(self.res_n_cl_obj_dict).Cl_Method.__repr__()
         # clm_f = self.clm_obj_func.__name__
         return f"ClSelect obj(clustering_f={clm_name}), labels={self.labels_df.head(10)}"
-
-    def print_kms(self):
-        print(self.n_cl_metrics)
 
     def set_up_metrics_weights(self, metrics_weights=None):
         metrics_names = self.n_cl_metrics.dropna().columns
@@ -214,25 +207,15 @@ class ClSelect:
         self.metrics_for_fitting = list(self.metrics_weights.index)
 
     @staticmethod
-    def concat_dfs_axis_and_sort(df_1, df_2, axis=0, ascending=True):
-        return pd.concat([df_1, df_2], axis=axis).sort_index(
-            axis=axis,
-            key=lambda x: x.map(lambda y: int(re.findall("[0-9]+", y)[0])),     # x.map(mf.return_int_number_of_string)
-            ascending=ascending
-        )
-
-    @staticmethod
     def merge_dfs_and_sort(df_old, df_new, axis=1, ascending=True):
-        if df_old is None:
-            return mf.sort_str_num_index(df_new, axis=axis, ascending=ascending)
-        if df_old.empty:
-            return mf.sort_str_num_index(df_new, axis=axis, ascending=ascending)
+        if isinstance(df_old, pd.DataFrame) and df_old.empty:
+            return df_new
+        elif df_old is None:
+            return df_new
 
+        df = gpd.merge_dfs(df_old=df_old, df_new=df_new, axis=axis)
         # TODO: Examine if there are multiple runs with the same number of clusters and if it is okk
-        return mf.sort_str_num_index(
-            df=gpd.merge_dfs(df_old=df_old, df_new=df_new, axis=axis),
-            axis=axis, ascending=ascending
-        )
+        return mf.sort_str_num_index(df=df, axis=axis, ascending=ascending)
 
     @classmethod
     def set_up_n_cl_metrics(cls, res_n_cl_obj_dict, n_cl_metrics_old, calc_elbow=False):
@@ -240,12 +223,11 @@ class ClSelect:
 
         n_cl_metrics = mf.extract_series_from_obj_dict(res_n_cl_obj_dict, var_name="metrics_sr", axis=0)
 
-        if not n_cl_metrics_old.empty:
-            n_cl_metrics = cls.merge_dfs_and_sort(
-                df_old=n_cl_metrics_old[list(n_cl_metrics.columns)],
-                df_new=n_cl_metrics,
-                axis=0
-            )
+        n_cl_metrics = cls.merge_dfs_and_sort(
+            df_old=n_cl_metrics_old[list(n_cl_metrics.columns)],
+            df_new=n_cl_metrics,
+            axis=0
+        )
 
         if calc_elbow:
             n_cl_metrics["Inertia elbow"] = cls.calc_inertia_angles(n_cl_metrics["Inertia"])
@@ -263,7 +245,7 @@ class ClSelect:
         print("pam_Line_1144")
         print(pd.DataFrame([obj.__dict__["labels"].rename(key) for key, obj in res_n_cl_obj_dict.items()]).T)
         print(labels_df)
-        # self.labels_df = self.concat_dfs_axis_and_sort(self.labels_df, new_labels, axis=1)
+        # self.labels_df = mf.concat_dfs_axis_and_sort(self.labels_df, new_labels, axis=1)
         self.labels_df = self.merge_dfs_and_sort(df_old=self.labels_df, df_new=labels_df, axis=1)
 
         self.n_cl_metrics = self.set_up_n_cl_metrics(
@@ -271,13 +253,6 @@ class ClSelect:
         )
         print("pam_line_2652")
         print(self.n_cl_metrics)
-        """
-        self.n_cl_m_pol_fit, self.n_cl_m_pol_delta = self.find_n_clm_dif_from_curve(
-            self.curve_functions_for_fitting(flt_key_list="pol_3")
-        )
-        self.n_cl_m_exp_fit, self.n_cl_m_exp_delta = self.find_n_clm_dif_from_curve(
-            self.curve_functions_for_fitting(flt_key_list="pol_3")
-        )"""
 
         self.res_n_cl_obj_dict.update(res_n_cl_obj_dict)
 
@@ -305,52 +280,17 @@ class ClSelect:
         if target_labels is None:
             return
 
+        print("\n\nCrosstab results of ClSelect object:\n\n")
         for n_cl in kmedoids_res_n_cl_dict:
-            print_pd_crosstab(kmedoids_res_n_cl_dict[n_cl].labels, target_labels)
+            print(f"{print_pd_crosstab(kmedoids_res_n_cl_dict[n_cl].labels, target_labels)}\n\n")
 
-    @staticmethod   # NOT USED, REPLACED BY "mf.extract_series_from_obj_dict"
-    def extract_n_cl_labels_from(n_cl_obj_dict, obj_labels_var_name):
-        labels_sr = pd.DataFrame()
-        for n_cl, n_cl_obj in n_cl_obj_dict.items():
-            labels_sr[n_cl] = n_cl_obj.__dict__[obj_labels_var_name]  # pam_obj.res_labels
-        return labels_sr  # .set_axis(mf.return_sorted_dict_key_numbers(n_cl_s_obj_dict), axis="index")
-
-    """
-    @staticmethod
-    def run_k_medoids_for_n_cl(data, min_n_cl=2, max_n_cl=10, n_iter=10, target_labels=None):
-        kmedoids_res_n_cl_dict = {}
-        for n_cl in range(min_n_cl, max_n_cl + 1):
-            kmedoids_res_n_cl_dict[f"Cl({n_cl})"] = ClMetrics.from_k_medoids_obj(
-                Kmedoids(data, n_clusters=n_cl, max_iter=n_iter))
-
-        return kmedoids_res_n_cl_dict
-    """
 
     @staticmethod
     def run_cl_metrics_obj_for_n_cl(clm_obj_func, data, min_n_cl=2, max_n_cl=10, n_iter=10, target_labels=None):
-        """
-        res_n_cl_obj_dict = {}
-        for n_cl in range(min_n_cl, max_n_cl + 1):
-            res_n_cl_obj_dict[f"Cl({n_cl})"] = clm_obj_func(data=data, n_clusters=n_cl, max_iter=n_iter)
-
-        return res_n_cl_obj_dict
-        """
         return {
             f"Cl({n_cl})": clm_obj_func(data=data, n_clusters=n_cl, max_iter=n_iter)
             for n_cl in range(min_n_cl, max_n_cl + 1)
         }
-
-    @staticmethod
-    def x_pow_n_func(x, a, b, x_axis, y_axis):
-        return a*((x - x_axis)**b) - y_axis
-
-    @staticmethod
-    def exponential_func(x, a, b, x_axis, y_axis):
-        return a*np.exp((x - x_axis) * b) - y_axis
-
-    @staticmethod
-    def exponent_func(x, a, b, x_axis, y_axis):
-        return a ** ((x - x_axis) * b) - y_axis
 
     @staticmethod
     def curve_functions_for_fitting(
@@ -435,14 +375,7 @@ class ClSelect:
             flt_in_keys = list(filter(lambda x: x in curve_func_dict.keys(), flt_key_list))
             return mf.filter_dict_by_keys(curve_func_dict, flt_in_keys)
 
-    def find_n_clm_dif_from_curve(self, curve_func: callable):
-        return self.find_single_curve_fit_to_n_cl_metrics(
-            func_to_fit=curve_func,
-            n_cl_metrics=self.n_cl_metrics[self.metrics_for_fitting],   # .iloc[1:-1],
-            min_x=self.min_n_cl,
-            max_x=self.max_n_cl
-        )
-
+    # NOT USED
     def create_curve_fit_data_for_n_cl_metrics(self, curve_f_keys: list | str | None = None):
         self.n_cl_m_fit, self.n_cl_m_delta, self.m_func_fit_difs = self.find_best_curve_fit_for_n_cl_metrics(
             curve_funcs_dict=self.curve_functions_for_fitting(flt_key_list=curve_f_keys, not_selected=False),
@@ -472,42 +405,17 @@ class ClSelect:
                 x_data=x_data, metric=n_cl_metrics[metric], max_pol_ord=max_pol_ord
             )
 
+    # NOT USED
     @classmethod
-    def find_single_curve_fit_to_n_cl_metrics(cls, func_to_fit, n_cl_metrics, min_x=None, max_x=None):
+    def find_single_curve_fit_to_metric(cls, func_to_fit, metric, n_cl_metrics, min_x=None, max_x=None):
         min_x, max_x = cls.def_min_max_if_none(min_max_dif=len(n_cl_metrics.index) - 1, min_x=min_x, max_x=max_x)
         x_data = list(range(min_x, max_x + 1))
 
-        n_cl_m_fit = pd.DataFrame(index=n_cl_metrics.index, columns=n_cl_metrics.columns)
-        n_cl_m_fit_delta = pd.DataFrame(index=n_cl_metrics.index, columns=n_cl_metrics.columns)
+        curve_f_res, opt_func = cls.curve_fit_single_metric(
+            curve_func=func_to_fit, metric=n_cl_metrics[metric], x_data=x_data
+        )
 
-        for metric in n_cl_metrics.columns:
-            """
-            try:
-                popt = curve_fit(func_to_fit, x_data, n_cl_metrics[metric], bounds=(-10, 10))[0]
-            except TypeError:
-                continue
-            except RuntimeError:
-                continue
-            except ValueError:
-                print("pam_line_2362")
-                print(x_data)
-                print(n_cl_metrics[metric])
-                continue
-            n_cl_m_pol_fit[metric] = pd.Series(x_data, index=n_cl_m_pol_fit.index).apply(
-                lambda x: func_to_fit(x, *popt)
-            )
-            n_cl_m_fit_delta[metric] = n_cl_metrics[metric] - n_cl_m_pol_fit[metric]
-            """
-            curve_f_res, opt_func = cls.curve_fit_single_metric(
-                curve_func=func_to_fit, metric=n_cl_metrics[metric], x_data=x_data
-            )
-            if curve_f_res is None:
-                continue
-
-            n_cl_m_fit[metric] = curve_f_res
-            n_cl_m_fit_delta[metric] = n_cl_metrics[metric] - curve_f_res
-
-        return n_cl_m_fit, n_cl_m_fit_delta
+        return curve_f_res, n_cl_metrics[metric] - curve_f_res
 
     @staticmethod
     def def_min_max_if_none(min_max_dif, min_x, max_x):
@@ -574,10 +482,11 @@ class ClSelect:
         return curve_f_res, opt_func
 
     @staticmethod
-    def find_best_pol_curve_fit_to_metric(x_data, metric, max_pol_ord, relative_error=False):
+    def find_best_pol_curve_fit_to_metric(x_data, metric, max_pol_ord, relative_error=False, fig_x_num=None):
         x = np.array(x_data)
         y = metric.values
-        x_b = np.linspace(x[0], x[-1], num=50)
+        fig_x_num = 38 if fig_x_num is None else fig_x_num
+        x_b = np.linspace(x[0], x[-1], num=fig_x_num)  # 'num' is double the default k=19 points, can be set to anything
 
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=x, y=y, name="Input data"))
@@ -804,6 +713,10 @@ class ClSelect:
     def selected_clm_obj(self) -> ClMetrics:
         return self.res_n_cl_obj_dict[self.selected_n_cl_str]
 
+    @property
+    def cl_m_slt(self):
+        return self.selected_clm_obj()
+
 
 def print_pd_crosstab(labels, target_labels):
     if isinstance(target_labels, (list, dict, np.ndarray)):
@@ -817,16 +730,9 @@ def print_pd_crosstab(labels, target_labels):
 
     crosstab_res = pd.crosstab(index=labels, columns=target_labels)
 
-    print(f"\n\npam_line_810\n---\n{crosstab_res}\n---\n\n")
+    # print(f"\n\npam_line_810\n---\n{crosstab_res}\n---\n\n")
 
     return crosstab_res
-
-
-def load_weights_excel_data():
-    data = pd.read_excel("weights.xlsx", sheet_name=0)
-    mf.add_name_to_dataframe_num_index(data, name="Point", inplace=True)
-
-    return data
 
 
 def load_iris_dataset():
@@ -835,14 +741,6 @@ def load_iris_dataset():
     target_of_cl = data_obj.target
 
     return data, target_of_cl
-
-
-def geeks_for_geeks_example_elbow_data():
-    x1 = np.array([3, 1, 1, 2, 1, 6, 6, 6, 5, 6, 7, 8, 9, 8, 9, 9, 8])
-    x2 = np.array([5, 4, 5, 6, 5, 8, 6, 7, 6, 7, 1, 2, 1, 2, 3, 2, 3])
-    data = pd.DataFrame(np.array(list(zip(x1, x2))).reshape(len(x1), 2))
-    data = data.astype("float32")
-    return data
 
 
 def create_data_fit_for_clustering(random_state: int | None = None, n_features=5, nun_of_samples=1500):
@@ -1014,68 +912,21 @@ def main():
     print(kms_n_cl_obj)
     """
 
-    # pam_n_cl_obj = ClSelect(return_cl_metrics_pam_obj, data, min_n_cl=2, max_n_cl=10, n_iter=10,
-                            # target_labels=target_labels, run_kmeans=True)
-
-    # print(pam_n_cl_obj)
-
-    # mf.set_up_3d_graph_data(data, target_labels, "PCA").show()
-    # mf.set_up_3d_graph_data(data, target_labels, "LDA").show()
-
     # kmedoids = test_pam_default_dist_func_settings(data, test_only_first=True)
 
-    pam_n_cl_obj = ClSelect(
+    n_cl_obj = ClSelect(
         cl_metrics_obj_func=partial(cl_metrics_set_up_for_k_medoids, n_cp_cand=None),
         data=data, min_n_cl=2, max_n_cl=15, n_iter=100
     )
-    print(pam_n_cl_obj.n_cl_metrics["Silhouette"])
-    kmedoids = pam_n_cl_obj.selected_clm_obj()
-    gvp.set_up_3d_graph_data(data, kmedoids.labels, "PCA").show()
+    print(n_cl_obj.n_cl_metrics["Silhouette"])
+    cl_m_slt = n_cl_obj.selected_clm_obj()
+    gvp.set_up_3d_graph_data(data, cl_m_slt.labels, "PCA").show()
     gvp.set_up_3d_graph_data(data, target_labels, "PCA").show()
-    gvp.set_up_3d_graph_data(data, kmedoids.labels, "LDA").show()
+    gvp.set_up_3d_graph_data(data, cl_m_slt.labels, "LDA").show()
     gvp.set_up_3d_graph_data(data, target_labels, "LDA").show()
-
 
     # cl_m_kms_obj = return_cl_metrics_kms_obj(data, 8, 10)
     # print(cl_m_kms_obj)
-
-    # file_path = "D:\Δημήτρης αρχεία\Εγγραφα\Πολυτεχνειο Κρητης\Διπλωματική\Group_DSS_code_python\Mobile-141.xlsx"
-    # file_path = "D:\Δημήτρης αρχεία\Εγγραφα\Πολυτεχνειο Κρητης\Διπλωματική\Group_DSS_code_python\OliveOil.xlsx"
-    # uta_for_group_t1_obj = gut.create_group_of_dms_data_with_data_template_1_obj(file_path)
-    # uta_g_obj = gut.UtastarGroup.from_temp1_obj(uta_for_group_t1_obj, n_dms_to_run=20)
-
-    # file_name = uta_for_group_t1_obj.excel_file_name.split(".")[0]
-
-    # cl_comp_obj = ClusteringComp(uta_g_obj, excel_data_name=file_name, write_to_excel=False)
-
-    # plot_clusters_with_pca_first(data)
-
-
-def plot_clusters_with_pca_first(data):
-    # Load Data
-    # data1 = load_digits().data
-    # print("data1\n", data1)
-    # data_list = mf.get_dataframe_data_to_list(data)
-    print("data\n", data)
-    pca = PCA(2)
-
-    # Transform the data
-    df = pca.fit_transform(data)
-
-    # Initialize the class object
-    kmeans = KMeans(n_clusters=10)
-
-    # predict the merged_idx_pd of n_clusters.
-    label = kmeans.fit_predict(data)
-    print(label)
-    # Getting unique merged_idx_pd
-    u_labels = np.unique(label)
-    print(u_labels)
-    # plotting the results:
-    for i in u_labels:
-        plt.scatter(df[label == i, 0], df[label == i, 1], label=i)
-    plt.legend()
-    plt.show()
 
 
 if __name__ == "__main__":

@@ -207,51 +207,6 @@ def create_n_cl_metrics_plotly_multy_line_charts(
                 st.dataframe(pam_n_cl_obj.n_cl_metrics)
 
 
-# USED IN A NOT USED FUNCTION
-def test_curve_for_n_clm_dif_plt_line_chart(curve_func, pam_n_cl_obj: pam.ClSelect, kms_n_cl_obj: pam.ClSelect):
-    df_max_exp_dif = pd.concat([
-        pam_n_cl_obj.find_n_clm_dif_from_curve(curve_func)[1][pam_n_cl_obj.decreasing_val_metric_names].T,
-        kms_n_cl_obj.find_n_clm_dif_from_curve(curve_func)[1][kms_n_cl_obj.decreasing_val_metric_names].T,
-    ], keys=["cl(1)", "cl(2)"]).apply(lambda x: standardize_sr(x), axis=1)
-
-    df_min_exp_dif = pd.concat([
-        pam_n_cl_obj.find_n_clm_dif_from_curve(curve_func)[1][pam_n_cl_obj.increasing_val_metric_names].T,
-        kms_n_cl_obj.find_n_clm_dif_from_curve(curve_func)[1][kms_n_cl_obj.increasing_val_metric_names].T,
-    ], keys=["cl(1)", "cl(2)"]).apply(lambda x: standardize_sr(x), axis=1)
-
-    create_n_clm_dif_max_min_plt_line_chart(df_max_exp_dif, df_min_exp_dif)
-
-
-# NOT USED
-def create_n_clm_plotly_charts_single_curve_old(pam_n_cl_obj, kms_n_cl_obj):
-
-    metrics = multiselect_submit(
-        label="Select metrics",
-        options=pam_n_cl_obj.metrics_for_fitting,
-        default=["Silhouette"],
-        label_above=True
-    )
-
-    cl1, cl2 = st.columns((1, 1))
-    cl1.dataframe(pam_n_cl_obj.m_func_fit_difs[metrics])
-    cl2.dataframe(kms_n_cl_obj.m_func_fit_difs[metrics])
-
-    curve_func_dict = pam_n_cl_obj.curve_functions_for_fitting()
-    for c_f_key, tab in zip(curve_func_dict, st.tabs(list(curve_func_dict.keys()))):
-        with tab:
-            print("pam app line 248\n\n\n\n", c_f_key)
-            df_c_f = pd.concat([
-                pam_n_cl_obj.n_cl_metrics[metrics].T,
-                kms_n_cl_obj.n_cl_metrics[metrics].T,
-                pam_n_cl_obj.find_n_clm_dif_from_curve(curve_func_dict[c_f_key])[0][metrics].T,
-                kms_n_cl_obj.find_n_clm_dif_from_curve(curve_func_dict[c_f_key])[0][metrics].T
-            ], keys=["pam", "kms", "pam-fit", "kms-fit"])
-
-            fitting_curve_to_n_clm_plt_line_chart(df_c_f)
-
-            test_curve_for_n_clm_dif_plt_line_chart(curve_func_dict[c_f_key], pam_n_cl_obj, kms_n_cl_obj)
-
-
 def specific_k_cluster_target_labels_comp(data_obj: ClRes):
     input_obj = data_obj.input_obj
     cl_stg_obj_dict = data_obj.cl_stg_obj_dict
