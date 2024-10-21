@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import pandas as pd
 import numpy as np
 from sklearn.cluster import KMeans
@@ -128,9 +130,12 @@ class ClSelect:
             cl_metrics_obj_func: callable,
             min_n_cl=2, max_n_cl=10, n_iter=10,
             target_labels=None,
-            metrics_weights: list | dict | pd.Series | None = None
+            metrics_weights: list | dict | pd.Series | None = None,
+            dist_func_obj: DistFunction = None
     ):
-        self.clm_obj_func = cl_metrics_obj_func
+        self.clm_obj_func = cl_metrics_obj_func if dist_func_obj is None else partial(
+            cl_metrics_obj_func, dist_func_obj=dist_func_obj
+        )
         self.data = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data).astype("float32")
         self.min_n_cl = min_n_cl
         self.max_n_cl = max_n_cl
@@ -169,8 +174,10 @@ class ClSelect:
         print(self.labels_df.value_counts())
         print(self.n_cl_metrics)
         clm_name = mf.get_dict_0key_val(self.res_n_cl_obj_dict).Cl_Method.__repr__()
-        # clm_f = self.clm_obj_func.__name__
-        return f"ClSelect obj(clustering_f={clm_name}), labels={self.labels_df.head(10)}"
+
+        clm_f = getattr(self.clm_obj_func, "__name__", __default=None)
+        clm_f = clm_f if clm_f is not None else getattr(self.clm_obj_func, "name", __default=None)
+        return f"ClSelect obj(clustering_f={clm_name})\n\nlabels={self.labels_df.head(10)}\n\nclm_obj_func: {clm_f})"
 
     def set_up_metrics_weights(self, metrics_weights=None):
         metrics_names = self.n_cl_metrics.dropna().columns
@@ -824,6 +831,7 @@ def cl_metrics_set_up_for_kms_obj(
         norm_order=2,
         cache_points=data
     ))
+
     return ClMetrics.from_sklearn_k_means_obj(
         kmeans_obj=KMeans(n_clusters=n_clusters, max_iter=max_iter, **kwargs),
         data=data,
@@ -843,6 +851,7 @@ def cl_metrics_set_up_for_k_medoids(
         norm_order=norm_ord,
         cache_points=data
     ))
+
     return ClMetrics.from_k_medoids_obj(Kmedoids(
         data=data,
         n_clusters=n_clusters,
@@ -863,12 +872,13 @@ def cl_metrics_set_up_for_faster_pam(
         data, n_clusters, max_iter=100,
         dist_metric="euclidean", norm_ord=None, dist_func_obj: DistFunction | None = None,
         **kwargs
-) -> ClMetrics:
+) -> Callable[[], ClMetrics]:
     dist_func_obj = mf.def_var_value_if_none(dist_func_obj, def_func=lambda: DistFunction(
         dist_metric=dist_metric,
         norm_order=norm_ord,
         cache_points=data
     ))
+
     return ClMetrics.from_faster_pam_obj(
         f_pam_obj=fasterpam(
             diss=dist_func_obj.distance_func_cache_all(),

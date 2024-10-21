@@ -52,8 +52,8 @@ class DistFunction:
         self.pw_matrix = points_weight_matrix
         self.dists_matrix_cache = None
 
-        self.cache_dists = cache_points is not None
-        if self.cache_dists:
+        self.cache_dists_enabled = cache_points is not None
+        if self.cache_dists_enabled:
             self.init_cache(self.cache_points)
 
         self.dist_func = mf.def_var_value_if_none(value_passed=dist_func, default=self.default_dist_func())
@@ -62,14 +62,14 @@ class DistFunction:
 
         self.dist_func_cache = self.distance_func_cache_all
 
-        if self.cache_dists:
+        if self.cache_dists_enabled:
             self.distance_func_cache_all()
 
     def __repr__(self):
         print(f"Metric selected: {self.dist_metric}")
         print(f"Norm order: {self.norm_order}")
         print(f"Distance funtion for vectors (1d) passed (bool): {self.dist_func is None}")
-        print(f"Cache distances (bool): {self.cache_dists is True}")
+        print(f"Cache distances (bool): {self.cache_dists_enabled is True}")
         return "DistFunction obj"
 
     def df_to_cache(self, df):

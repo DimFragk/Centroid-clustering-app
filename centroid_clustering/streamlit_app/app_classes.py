@@ -6,6 +6,7 @@ from typing import Callable
 from functools import partial
 
 from centroid_clustering import clustering_selection as pam
+from centroid_clustering.clustering_metrics import DistFunction
 from utils import streamlit_functions as Ui
 
 
@@ -104,9 +105,14 @@ class ClStgKmeans(ClSettings):
 
     @classmethod
     def set_up(cls, cl_name, data, max_iter, min_n_cl=2, max_n_cl=20, **kwargs):
+        dist_func_obj=DistFunction(
+            dist_metric="norm^p",
+            norm_order=2,
+            cache_points=data
+        )
         n_cl_obj = pam.ClSelect(
             data=data,
-            cl_metrics_obj_func=partial(pam.cl_metrics_set_up_for_kms_obj, **kwargs),
+            cl_metrics_obj_func=partial(pam.cl_metrics_set_up_for_kms_obj, dist_func_obj=dist_func_obj, **kwargs),
             n_iter=max_iter,
             min_n_cl=min_n_cl,
             max_n_cl=max_n_cl
@@ -132,9 +138,14 @@ class ClStgFasterPam(ClSettings):
 
     @classmethod
     def set_up(cls, cl_name, data, max_iter=20, min_n_cl=2, max_n_cl=20, **kwargs):
+        dist_func_obj=DistFunction(
+            dist_metric=kwargs.pop("dist_metric"),
+            norm_order=kwargs.pop("norm_ord"),
+            cache_points=data
+        )
         n_cl_obj = pam.ClSelect(
             data=data,
-            cl_metrics_obj_func=partial(pam.cl_metrics_set_up_for_faster_pam, **kwargs),
+            cl_metrics_obj_func=partial(pam.cl_metrics_set_up_for_faster_pam, dist_func_obj=dist_func_obj, **kwargs),
             n_iter=max_iter,
             min_n_cl=min_n_cl,
             max_n_cl=max_n_cl
@@ -180,10 +191,14 @@ class ClStgCustomKMedoids(ClSettings):
 
     @classmethod
     def set_up(cls, cl_name, data, max_iter=20, min_n_cl=2, max_n_cl=20, **kwargs):
-
+        dist_func_obj = DistFunction(
+            dist_metric=kwargs.pop("dist_metric"),
+            norm_order=kwargs.pop("norm_ord"),
+            cache_points=data
+        )
         n_cl_obj = pam.ClSelect(
             data=data,
-            cl_metrics_obj_func=partial(pam.cl_metrics_set_up_for_k_medoids, **kwargs),
+            cl_metrics_obj_func=partial(pam.cl_metrics_set_up_for_k_medoids, dist_func_obj=dist_func_obj, **kwargs),
             n_iter=max_iter,
             min_n_cl=min_n_cl,
             max_n_cl=max_n_cl
