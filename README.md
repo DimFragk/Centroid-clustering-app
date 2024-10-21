@@ -60,13 +60,14 @@ python library ([streamlit documentation](https://docs.streamlit.io/)).
 >
 >`pip install -r requirements_without_versions.txt`
 > 
-> Then to start the streamlit app:
+> Then to start the streamlit app locally:
+> 
 >`streamlit run Home_page.py`
 
 ### Reporting issues and support requests
 
 Please report errors, support requests and questions as 
-[issue](https://github.com/kno10/python-kmedoids/issues) 
+[issue](https://github.com/DimFragk/Centroid-clustering-app/issues) 
 within the repository's issue tracker and i will do my best to address them.
 
 ### License: GPL-3 or later
