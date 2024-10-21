@@ -302,7 +302,7 @@ def home_page():
         The goal of the centroid based clustering app, is to support the selection
         of the "best" among many different clustering versions/attempts, on the same input data. 
         
-        There are 2 basic decision parameters: 
+        There are 2 main decision parameters: 
         - The clustering method (including settings parameters)
         - The number of clusters (k)
         """
@@ -330,8 +330,8 @@ def home_page():
     st.subheader("General Methodology", divider="grey")
     st.write(
         """
-        For selecting the best centroid_clustering algorithm, the app runs the selected centroid_clustering algorithm 
-        for 'k' number of clusters, from 'k = 2' to 'k = 20'. 
+        For selecting the best centroid_clustering algorithm, the app runs the selected clustering algorithm 
+        for every number of clusters from 'k = 2' to 'k = 20', so 19 total clustering versions/attempts. 
         
         Then it evaluates each centroid_clustering using 4 metrics:
         - Inertia
@@ -342,12 +342,12 @@ def home_page():
         After the evaluation, an approximate polynomial interpolation (fitting function)
         is selected to represent the expected value of each metric 
         (for polynomial orders less than half of the data points).
-        The goal is to find the maximum relative difference of the fitting function and each metric.
+        The goal is to find the maximum difference of the fitting function and each metric.
         
-        Finally, a combined centroid_clustering index is calculated by the weighted sum of relative differences, 
+        Finally, a combined clustering index is calculated by the weighted sum of relative differences, 
         for each centroid_clustering with different 'k'.
         
-        This process is repeated when selecting a different centroid_clustering algorithm, 
+        This process is repeated when selecting a different clustering algorithm, 
         and the results are shown for 2 centroid_clustering algorithms at a time, for easier comparisons.    
         """
     )
