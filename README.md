@@ -52,24 +52,23 @@ and the results are shown for 2 centroid_clustering algorithms at a time, for ea
 - The apps web GUI is created with the [streamlit](https://streamlit.io/) 
 python library ([streamlit documentation](https://docs.streamlit.io/)). 
 
->After activating the desirable virtual environment in the project folder:
->
->`pip install -r requirements.txt`
->
->or to install the latest versions of the imported libraries (may not always work):
->
->`pip install -r requirements_without_versions.txt`
-> 
-> Then, to start the streamlit app locally:
-> 
->`streamlit run Home_page.py`
-> 
+After activating the desirable virtual environment in the project folder:
+
+`pip install -r requirements.txt`
+
+or to install the latest versions of the imported libraries (may not always work):
+
+`pip install -r requirements_without_versions.txt`
+ 
+Then, to start the streamlit app locally:
+ 
+`streamlit run Home_page.py`
+ 
 
 If you want to use the code directly into your project, 
 place the folders "utils" and "centroid_clustering" in the root of your project.
 Then, a simple demo.py file looks like this:
-
-- Imports and data generation
+> #### Imports and data generation
 > ```python
 > from functools import partial
 > from centroid_clustering import clustering_selection as cl_slt
@@ -78,8 +77,8 @@ Then, a simple demo.py file looks like this:
 > # Random data generation for demo
 > data, target_labels, cps = cl_slt.create_data_fit_for_clustering()
 > ```
-
-- Create an instance of class "ClSelect" 
+> ___
+> #### Create an instance of class "ClSelect" 
 > The class "ClSelect" is the main class that executes the 
 > selected clustering algorithm for k=2 to k=20 clusters by default.
 > As an input argument needs a function that follows the protocol: 
@@ -110,8 +109,8 @@ Then, a simple demo.py file looks like this:
 > # Creating an instance of "ClSelect"
 > n_cl_obj = cl_slt.ClSelect(data=data, cl_metrics_obj_func=cl_m_fn, min_n_cl=2, max_n_cl=20, n_iter=100)
 > ```
-
-- Results overview
+> ___
+> #### Results overview
 > Quick overview with a plotly 3d scatter plot:
 >```python
 > # Get the default best clustering instance of "ClMetrics"
