@@ -9,6 +9,8 @@ There are 2 main decision parameters:
 - The clustering method (including settings parameters)
 - The number of clusters (k)
 
+You can run the app from [here](https://k-medoids-clustering-selection-app.streamlit.app/)!
+
 ### Implemented clustering methods
 - k-medoids
 - k-means

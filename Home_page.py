@@ -8,13 +8,11 @@ if __name__ == "__main__":
         page_icon="📈",
         layout="wide",
         initial_sidebar_state="auto",
-    )
-    """    
         menu_items={
-            'Get Help': "",
-            'Report a bug': "",
-            'About': "Welcome to the Large Group Decision Support System (LGDSS) app!"
+            "Get help": "https://github.com/DimFragk/Centroid-clustering-app/issues",
+            "Report a bug": "https://github.com/DimFragk/Centroid-clustering-app/issues",
+            "About": "Selection of the best centroid based clustering version with k-medoids and k-means"
         }
     )
-    """
+
     cl_app_main()

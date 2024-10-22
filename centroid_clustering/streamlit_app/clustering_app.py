@@ -305,23 +305,25 @@ def home_page():
         There are 2 main decision parameters: 
         - The clustering method (including settings parameters)
         - The number of clusters (k)
+        
+        The project source code can be found in ([github](https://github.com/DimFragk/Centroid-clustering-app))
         """
     )
     st.divider()
     st.subheader("Clustering algorithms", divider="grey")
     st.markdown(
         r"""
-        ##### The app has implemented 2 centroid_clustering methods:
+        ###### The app has implemented 2 centroid_clustering methods:
         - k-medoids
         - k-means
         
-        ##### The k-medoids centroid_clustering algorithms used are:  
+        ###### The k-medoids centroid_clustering algorithms used are:  
         1. 'fasterpam': One of the pam algorithms from the python library "kmedoids"
         ([pypi.org](https://pypi.org/project/kmedoids/)) 
         ([github](https://github.com/kno10/python-kmedoids)) 
         2. 'Custom kmedoids': My attempt at creating a k-medoids centroid_clustering algorithm, it is included in this project 
         
-        #### The k-means centroid_clustering algorithm used is:
+        ###### The k-means centroid_clustering algorithm used is:
         1. 'KMeans': from the python library scikit-learn
         ([Documentation](https://scikit-learn.org/1.5/modules/generated/sklearn.cluster.KMeans.html))
         """
