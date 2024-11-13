@@ -15,6 +15,8 @@ from typing import Optional, Callable
 from utils import general_functions as mf
 import utils.math_functions as gmf
 import utils.pandas_functions as gpd
+from utils.general_functions import def_var_value_if_none
+
 # import utils.data_processing as gdp
 # import utils.visualization_functions as gvp
 # import Read_Excel as rxl
@@ -37,7 +39,7 @@ class DistFunction:
 
     def __init__(self, dist_metric="euclidean", norm_order=None,
                  dist_func: Callable = None, vector_dist_func: Callable = None,
-                 cache_points: pd.DataFrame = None, points_weight_matrix: pd.DataFrame = None):
+                 cache_points: pd.DataFrame = None, points_weight_matrix: pd.DataFrame = None, calc_pdist=True):
 
         self.norm_order = norm_order
         self.dist_func_0d = vector_dist_func
@@ -45,16 +47,13 @@ class DistFunction:
         self.dist_func_2d = None
         self.pdist_func = None
 
+        self.cache_dists_enabled = cache_points is not None
         self.dist_metric = dist_metric
         self.distance_metric_set_up(dist_metric, norm_order, vector_dist_func)
 
         self.cache_points = cache_points
         self.pw_matrix = points_weight_matrix
-        self.dists_matrix_cache = None
-
-        self.cache_dists_enabled = cache_points is not None
-        if self.cache_dists_enabled:
-            self.init_cache(self.cache_points)
+        self.dists_matrix_cache = pd.DataFrame()
 
         self.dist_func = mf.def_var_value_if_none(value_passed=dist_func, default=self.default_dist_func())
 
@@ -62,8 +61,15 @@ class DistFunction:
 
         self.dist_func_cache = self.distance_func_cache_all
 
-        if self.cache_dists_enabled:
-            self.distance_func_cache_all()
+        if not self.cache_dists_enabled:
+            return
+
+        self.init_cache(self.cache_points)
+
+        if not calc_pdist:
+            return
+
+        self.distance_func_cache_all()
 
     def __repr__(self):
         print(f"Metric selected: {self.dist_metric}")
@@ -72,9 +78,25 @@ class DistFunction:
         print(f"Cache distances (bool): {self.cache_dists_enabled is True}")
         return "DistFunction obj"
 
-    def df_to_cache(self, df):
+    @classmethod
+    def set_up_from_dist_matrix(cls, dist_matrix, dist_metric="DistMatrixPassed", norm_order=None):
+        obj = cls(
+            dist_metric=dist_metric,
+            norm_order=norm_order
+        )
+        obj.pass_dist_matrix(dist_matrix)
+        return obj
+
+    def pass_dist_matrix(self, dist_matrix):
+        self.cache_complete = True
+        self.dists_matrix_cache = pd.DataFrame(dist_matrix)
+
+    def df_to_cache(self, df, calc_dists_matrix=False):
         self.cache_points = df
+        self.cache_complete = False
         self.init_cache(df)
+        if calc_dists_matrix:
+            self.distance_func_cache_all()
 
     def delete_cache(self):
         self.init_cache(self.dists_matrix_cache)
@@ -82,6 +104,34 @@ class DistFunction:
 
     def init_cache(self, points):
         self.dists_matrix_cache = pd.DataFrame(np.nan, index=points.index, columns=points.index)
+
+    def check_if_all_dists_are_cached(self):
+        if self.dists_matrix_cache is None:
+            self.cache_complete = False
+        else:
+            self.cache_complete = self.check_df_for_na(self.dists_matrix_cache)
+        # self.dist_func_cache = lambda a, b, bl=self.cache_dists: self.distance_func_cache_all(a, b, bl)
+        print(f"pam line 544\n cache complete: {self.cache_complete}")
+        return self.cache_complete
+
+    @staticmethod
+    def check_df_for_na(df):
+        return all(df.notna().apply(all))
+
+    def num_of_nan_in_cache(self):
+        return self.dists_matrix_cache.apply(
+            lambda x: x.isna().sum()
+        ).sum()
+
+    def check_cache_compatibility(self, data_points):
+        if self.dists_matrix_cache is None or self.dists_matrix_cache.empty:
+            return False
+        try:
+            cache_points = self.cache_points.loc[data_points.index]
+            cache_matrix = self.dists_matrix_cache.loc[data_points.index]
+            return self.check_df_for_na(cache_matrix)
+        except KeyError:
+            return False
 
     def distance_metric_set_up(self, metric_passed: str, norm_order: int, vector_dist_func: Callable):
         if metric_passed is None and norm_order is None and vector_dist_func is None:
@@ -161,7 +211,10 @@ class DistFunction:
             self.pdist_func = self.p_dist_func_scipy(dist_metric=self.dist_metric)
             return
 
-        raise Exception(f"Metric passed ({metric_passed}) has not been supported")
+        if self.cache_dists_enabled:
+            raise Exception(f"Metric passed ({metric_passed}) has not been supported")
+
+        self.dist_metric = metric_passed
 
     def default_dist_func(self):
         # A property-like function that return a func
@@ -421,8 +474,8 @@ class DistFunction:
 
     def distance_func_cache_all(self, matrix_a=None, matrix_b=None, cache=True):
         if matrix_a is None and matrix_b is None and self.cache_complete:
-            print("pam_line_611")
-            print("Precomputed distance matrix requested")
+            # print("pam_line_611")
+            # print("Precomputed distance matrix requested")
             return self.dists_matrix_cache
 
         if matrix_a is None:
@@ -439,14 +492,14 @@ class DistFunction:
         elif isinstance(matrix_a, pd.Series):
             index_idx = matrix_a.name
         else:
-            raise Exception("False data type entry")
+            return self.dist_func(matrix_a=matrix_a, matrix_b=matrix_b)
 
         if isinstance(matrix_b, pd.DataFrame):
             col_idx = matrix_b.index
         elif isinstance(matrix_b, pd.Series):
             col_idx = matrix_b.name
         else:
-            raise Exception("False data type entry")
+            return self.dist_func(matrix_a=matrix_a, matrix_b=matrix_b)
 
         if not self.cache_complete:
             print("pam_line_638")
@@ -459,21 +512,6 @@ class DistFunction:
             self.check_if_all_dists_are_cached()
 
         return self.dists_matrix_cache.loc[index_idx, col_idx].copy()
-
-    def check_if_all_dists_are_cached(self):
-        self.cache_complete = all(self.dists_matrix_cache.notna().apply(all))
-        # self.dist_func_cache = lambda a, b, bl=self.cache_dists: self.distance_func_cache_all(a, b, bl)
-        print(f"pam line 544\n cache complete: {self.cache_complete}")
-
-    def num_of_nan_in_cache(self):
-        return self.dists_matrix_cache.apply(
-            lambda x: x.isna().sum()
-        ).sum()
-
-    def check_cache_compatibility(self, data_points):
-        row_check = len(self.dists_matrix_cache.loc[data_points.index].index) == len(data_points.index)
-        col_check = len(self.cache_points[data_points.columns].columns) == len(data_points.columns)
-        return row_check and col_check
 
 
 @dataclass(slots=True, frozen=True)
@@ -523,8 +561,9 @@ class ClMGroupData:
 class ClMetrics:
     def __init__(
             self, data: pd.DataFrame, cl_method, labels: pd.Series, center_points: pd.DataFrame | None,
-            dist_func, dist_metric: str, dists_matrix: pd.DataFrame, dists_p_norm: int,
-            inertia=None, clusters_df=None, cps_dist_matrix=None,
+            dist_func: Callable, dist_metric: str, dists_matrix: pd.DataFrame, dists_p_norm: int,
+            inertia: float=None, clusters_df: pd.DataFrame=None,
+            cps_dist_matrix: pd.DataFrame=None, imaginary_cps=False,
             cl_name: str | None = "Clustering Metrics object", medoid_le_dict: dict | None = None):
 
         self.cl_name = cl_name
@@ -539,15 +578,13 @@ class ClMetrics:
 
         self.dists_p_norm = dists_p_norm
         self.inertia = inertia
-        self.medoid_le_dict = medoid_le_dict
-
-        if center_points is None:
-            self.cps_df = self.data.groupby(self.labels).mean()
+        self.medoid_le_dict = medoid_le_dict    # Only used for the index of "cps_dist_matrix" in case
 
         self.global_cp_cost = self.dists_matrix.apply(lambda x: np.linalg.norm(x, ord=self.dists_p_norm))
 
         self.n_cl = len(self.cps_df.index)
-        self.no_im_cp_bool = all(self.cps_df.index.isin(self.labels.index))
+        self.cps_index_match = all(self.cps_df.index.isin(self.labels.index))
+        self.no_im_cp_bool = not imaginary_cps
         print("pam_line_2038")
         print(self.no_im_cp_bool)
         print(self.medoid_le_dict)
@@ -556,14 +593,16 @@ class ClMetrics:
         self.print_data_passed()
         """
 
-        if cps_dist_matrix is not None:
+        # The columns of "cps_dist_matrix" and index of "cps_df" should always be the same
+        # this holds true for imaginary centers or medoids with changed names
+        if isinstance(cps_dist_matrix, pd.DataFrame):
             self.cps_dist_matrix = cps_dist_matrix
-        elif self.no_im_cp_bool:
+        elif self.no_im_cp_bool is True:
             self.cps_dist_matrix = self.dists_matrix.loc[self.data.index, self.cps_df.index]
         elif medoid_le_dict is not None:
-            medoid_idx = pd.Index([t for k, t in self.medoid_le_dict.items()])
+            medoid_idx = pd.Index([t for k, t in medoid_le_dict.items()])
             self.cps_dist_matrix = self.dists_matrix.loc[self.data.index, medoid_idx]
-            self.cps_dist_matrix = self.cps_dist_matrix.set_axis(self.medoid_le_dict.keys(), axis=1)
+            self.cps_dist_matrix = self.cps_dist_matrix.set_axis(medoid_le_dict.keys(), axis=1)
         else:
             self.cps_dist_matrix = self.dist_func(self.data, self.cps_df, False)
 
@@ -591,8 +630,7 @@ class ClMetrics:
             dist_metric=self.dist_metric,
             norm_ord=self.dists_p_norm,
             clusters_df=self.clusters_df,
-            cps_dist_matrix=self.cps_dist_matrix,
-            medoid_le_dict=self.medoid_le_dict
+            cps_dist_matrix=self.cps_dist_matrix
         )
         # self.cl_counts = self.ClDist.cl_counts.loc[list(self.cps_df.index)].set_axis(self.cps_df.index)
         self.cl_counts = self.ClDist.cl_counts.reindex(self.cps_df.index)
@@ -641,7 +679,7 @@ class ClMetrics:
         return "ClMetrics obj"
 
     @classmethod
-    def from_k_medoids_obj(cls, kmedoids_obj):
+    def from_k_medoids_obj(cls, kmedoids_obj, dists_p_norm=2):
         return cls(
             data=kmedoids_obj.data,
             cl_method=kmedoids_obj,
@@ -651,7 +689,7 @@ class ClMetrics:
             dist_func=kmedoids_obj.dist_func_cache,
             dist_metric=kmedoids_obj.DistFunc.dist_metric,
             dists_matrix=kmedoids_obj.DistFunc.distance_func_cache_all(),
-            dists_p_norm=kmedoids_obj.dists_norm_ord,
+            dists_p_norm=dists_p_norm,
             inertia=kmedoids_obj.inertia,
             cl_name="Custom k-medoids"
         )
@@ -678,30 +716,32 @@ class ClMetrics:
             dists_p_norm=1,
             inertia=kms_fit.inertia_,
             clusters_df=None,
+            imaginary_cps=True,
             cps_dist_matrix=pd.DataFrame(kms_fit.transform(data), index=data.index, columns=im_cp_names),
             cl_name="K-means"
         )
 
     @classmethod
     def from_faster_pam_obj(cls, f_pam_obj: KMedoidsResult, data, dist_func_obj: DistFunction, dists_norm=2):
-        def tuple_name_f(tpl):
-            if not isinstance(tpl, tuple):
-                return f"Medoid({tpl})"
-            return f"Medoid({mf.tuple_to_text(tpl, sep='|')})"
-
-        le = LabelEncoder()
-        le.classes_ = np.array([tuple_name_f(t) for t in data.iloc[f_pam_obj.medoids].index])
-        labels_inv = pd.Series(le.inverse_transform(f_pam_obj.labels), index=data.index)
-        medoids = pd.DataFrame(data.iloc[f_pam_obj.medoids].values, index=list(le.classes_), columns=data.columns)
-        labels_c = pd.Series(f_pam_obj.labels, index=data.index).apply(
-            lambda x: tuple_name_f(data.iloc[f_pam_obj.medoids[x]].name)
+        medoid_names = [f"Medoid({data.index[t]})" for t in f_pam_obj.medoids]
+        cps_df = data.iloc[f_pam_obj.medoids]
+        medoid_le_dict = dict(zip(medoid_names, list(cps_df.index)))
+        medoids = cps_df.set_axis(medoid_names, axis=0)
+        # labels:[0, 19] -> medoids:[0, len(data]) -> data.index [unique values]
+        labels_inv = pd.Series(
+            [
+                f"Medoid({data.index[f_pam_obj.medoids[f_pam_obj.labels[lb]]]})"
+                for lb in range(len(f_pam_obj.labels))
+            ],
+            index=data.index
         )
-        print("pam_line_2165")
-        print(list(labels_inv))
-        print(list(labels_c))
-        print(list(labels_inv) == list(labels_c))
-        print(data.iloc[f_pam_obj.medoids])
+        dists_matrix = dist_func_obj.distance_func_cache_all()
+        cps_dist_matrix = dists_matrix[cps_df.index].set_axis(medoid_names, axis=1)
+        """
+        print("pam_line_717")
+        print(labels_inv)
         print(medoids)
+        """
 
         return cls(
             data=data,
@@ -710,11 +750,12 @@ class ClMetrics:
             center_points=medoids,
             dist_metric=dist_func_obj.dist_metric,
             dist_func=dist_func_obj.dist_func_cache,
-            dists_matrix=dist_func_obj.distance_func_cache_all(),
+            dists_matrix=dists_matrix,
+            cps_dist_matrix=cps_dist_matrix,
             dists_p_norm=dists_norm,
             inertia=float(f_pam_obj.loss),
             cl_name="Faster_PAM",
-            medoid_le_dict=dict(zip(list(le.classes_), list(data.iloc[f_pam_obj.medoids].index)))
+            medoid_le_dict=medoid_le_dict
         )
 
     @classmethod
@@ -827,7 +868,6 @@ class ClMetrics:
 
         return cl_cost_n
 
-
     def calc_silhouette_samples(self, simplified=True):
         if simplified:
             point_cl_mean_dists = self.cps_dist_matrix
@@ -913,7 +953,6 @@ class ClMetrics:
 
         return pd.Series(data=sil_sample, index=self.labels.index, name=name, dtype="float32")
 
-
     def sklearn_silhouette_samples(self, data: pd.DataFrame, labels: pd.Series, dist_metric=None, dists_matrix=None):
 
         print("pam_line_2008")
@@ -995,13 +1034,15 @@ class ClMetrics:
         """
 
         global_medoid = self.data.loc[self.global_cp_cost.idxmin()]
-
+        """
         if self.no_im_cp_bool:
             separation_cl = self.cps_dist_matrix.loc[global_medoid.name, self.cps_df.index].rename("Cl separation")
         else:
             separation_cl = self.dist_func(
                 self.cps_df, global_medoid, False
             ).rename("Cl separation")
+        """
+        separation_cl = self.cps_dist_matrix.loc[global_medoid.name, self.cps_df.index].rename("Cl separation")
 
         separation = np.sum(separation_cl.pow(dists_p_norm) * self.cl_counts)     # .reindex(self.cps_df.index)))
 
@@ -1079,8 +1120,10 @@ class ClMetrics:
             mean_k = cl_centers[k]
             # extra_disp += len(cluster_k) * np.sum((mean_k - mean) ** 2)
             separation_cl[k] = self.dist_func(mean_k, mean, False)
-            print("pam_line_1060")
+            """
+            print("pam_metrics_line_1060")
             print(separation_cl[k])
+            """
             extra_disp += len(cluster_k) * separation_cl[k] ** dists_p_norm
             # intra_disp += np.sum((cluster_k - mean_k) ** 2)
 
@@ -1121,7 +1164,7 @@ class ClMetrics:
                 self.sil_samples,
                 self.sil_samples_spl,
                 self.cps_dist_matrix.min(axis=1).rename("Min cl medoid"),
-                self.mean_cl_dists.min(axis=1).rename("Mean cl distance"),
+                self.mean_cl_dists.min(axis=1).rename("Min mean of cl distances"),
                 self.dist_func(self.data, self.global_medoid).rename("Distance from global medoid"),
                 self.labels.rename("Labels")
             ],
@@ -1136,7 +1179,7 @@ class ClMetrics:
 class ClDistMetrics:
     def __init__(self, data: pd.DataFrame, labels: pd.Series, center_points: pd.DataFrame,
                  dist_func: callable, dist_metric: str | None, norm_ord=2,
-                 clusters_df=None, cps_dist_matrix=None, medoid_le_dict: dict | None = None):
+                 clusters_df=None, cps_dist_matrix=None):
 
         self.data = data
         self.labels = labels
@@ -1144,7 +1187,6 @@ class ClDistMetrics:
         self.dist_func = dist_func
         self.dist_metric = dist_metric
         self.norm_ord = norm_ord
-        self.medoid_le_dict = medoid_le_dict
 
         self.no_im_cp_bool = all(self.cps_df.index.isin(self.labels.index))
 
@@ -1212,7 +1254,7 @@ class ClDistMetrics:
     def from_pam_core_obj(cls, pam_core_obj, labels=None):
         return cls(
             data=pam_core_obj.points,
-            labels=mf.def_var_value_if_none(value_passed=labels, default=pam_core_obj.res_labels),
+            labels=mf.def_var_value_if_none(value_passed=labels, default=pam_core_obj.labels),
             center_points=pam_core_obj.res_cps_df,
             dist_func=pam_core_obj.dist_func,
             dist_metric=None,

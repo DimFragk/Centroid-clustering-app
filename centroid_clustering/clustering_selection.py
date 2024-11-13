@@ -18,12 +18,8 @@ import utils.pandas_functions as gpd
 import utils.data_processing as gdp
 import utils.visualization_functions as gvp
 
-if __name__ == "__main__":
-    from centroid_clustering.custom_k_medoids import Kmedoids
-    from centroid_clustering.clustering_metrics import DistFunction, ClMetrics
-else:
-    from .custom_k_medoids import Kmedoids
-    from .clustering_metrics import DistFunction, ClMetrics
+from centroid_clustering.custom_k_medoids import Kmedoids
+from centroid_clustering.clustering_metrics import DistFunction, ClMetrics
 
 # from __future__ import annotations
 # import warnings
@@ -746,7 +742,7 @@ def load_iris_dataset():
     return data, target_of_cl
 
 
-def create_data_fit_for_clustering(random_state: int | None = None, n_features=5, nun_of_samples=1500):
+def create_data_fit_for_clustering(random_state: int | None = None, n_features=5):
     def partial_make_blobs(n_samples, centers, cluster_std, center_box):
         return make_blobs(
             n_samples=n_samples,
@@ -758,6 +754,8 @@ def create_data_fit_for_clustering(random_state: int | None = None, n_features=5
             random_state=random_state,
             return_centers=True
         )
+
+    # TODO: Use number of samples
 
     feature_names = [f"Feature_{i}" for i in range(1, n_features + 1)]
 
@@ -784,8 +782,8 @@ def create_data_fit_for_clustering(random_state: int | None = None, n_features=5
 
     data_4, labels_4, center_4 = partial_make_blobs(
         n_samples=[
-            20, 35, 100, 50, 25, 150, 60,
-            150, 50, 10, 100, 70, 30, 90
+            20, 30, 100, 50, 40, 150, 60,
+            150, 50, 10, 100, 70, 30, 90, 80
         ],  # 500
         centers=None,  # 14
         cluster_std=0.15,  # 1
@@ -856,8 +854,8 @@ def cl_metrics_set_up_for_k_medoids(
         data=data,
         n_clusters=n_clusters,
         max_iter=max_iter,
-        dists_p_norm=dists_norm,
-        dist_func=dist_func_obj,
+        dists_norm=dists_norm,
+        dist_func_obj=dist_func_obj,
         n_init=n_init,
         dim_redux=dim_redux,
         starting_points=starting_points,

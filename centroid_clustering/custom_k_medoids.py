@@ -1,119 +1,89 @@
 import pandas as pd
 import numpy as np
-from scipy.spatial.distance import cdist
-from scipy.spatial.distance import euclidean
+# from scipy.spatial.distance import cdist
+# from scipy.spatial.distance import euclidean
 from scipy.spatial import ConvexHull
+# from scipy.stats import pmean
+from numba import njit
 
 import math
 from time import time, process_time
 from itertools import combinations
+from typing import Literal
 
 from utils import general_functions as mf
 import utils.math_functions as gmf
 import utils.pandas_functions as gpd
 import utils.data_processing as gdp
 # import utils.visualization_functions as gvp
+from utils.general_functions import def_var_value_if_none
 
-if __name__ == "__main__":
-    from centroid_clustering.clustering_metrics import DistFunction, ClDistMetrics
-else:
-    from .clustering_metrics import DistFunction, ClDistMetrics
+from centroid_clustering.clustering_metrics import DistFunction, ClDistMetrics
 
 
 class Kmedoids:
     def __init__(
-            self, data, n_clusters: int,
-            n_init: int = 5,
+            self,
+            data: pd.DataFrame,
+            n_clusters: int,
+            n_init: int = 1,
             dim_redux: int = None,
-            st_p_method: str = None,
+            st_p_method: Literal["convex_hull", "kmeans++", "rand_min_cost", "pam_build"] | str = "pam_build",
             starting_points: list[int, str, tuple[int, str]] = None,
             im_st_points: np.ndarray | pd.DataFrame | pd.Series | list = None,
-            dist_func: DistFunction = None,
-            dists_p_norm: int = 1,
-            cand_options: dict[str, int | bool] = None,
-            max_iter: int = None,
-            iter_cp_comb: int = None):
+            dist_func_obj: DistFunction | pd.DataFrame = None,
+            dist_metric: str = "euclidean",
+            norm_ord: int = 2,
+            dists_norm: int = 1,
+            cand_options: dict[str, (int, str, bool)] = None,
+            max_iter: int = 200,
+            iter_cp_comb: int = 500
+    ):
 
-        self.data = data
+        self.data = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
         self.num_of_clusters = n_clusters
-        self.dim_redux = dim_redux
 
         self.n_init = n_init
+        self.dim_redux = dim_redux
+
+        self.st_p_method = st_p_method
         self.starting_points = starting_points
         self.im_st_points = im_st_points
-        self.st_p_method = mf.def_var_value_if_none(st_p_method, default="convex_hull")
 
-        self.dists_norm_ord = dists_p_norm
+        self.dists_norm_ord = dists_norm
         self.cand_options = cand_options
 
-        if self.cand_options is not None:
-            self.cand_options["n_cp_cand"] = mf.def_var_value_if_none(cand_options["n_cp_cand"], default=5)
-            self.cand_options["g_median"] = mf.def_var_value_if_none(cand_options["g_median"], default=False)
-            self.cand_options["p_mean_ord"] = mf.def_var_value_if_none(cand_options["p_mean_ord"], default=1)
+        self.max_num_of_iter = max_iter
+        self.iter_cp_comb = iter_cp_comb
 
         self.num_of_dimensions = len(self.data.columns)
         self.num_of_points = len(self.data.index)
 
-        self.max_num_of_iter = mf.def_var_value_if_none(value_passed=max_iter, default=50)
-        self.iter_cp_comb = mf.def_var_value_if_none(iter_cp_comb, default=1000)
+        self.points: pd.DataFrame | None = None
+        self.points_no_dupl: pd.DataFrame | None = None
+        self.DistFunc: DistFunction | None = None
 
-        self.m_idx_merge = False
-        self.merge_sep_str = " |-| "
-        self.idx_name = self.data.index.name
-        self.points = self.prepare_points_df_from_data(dim_redux=self.dim_redux)
-        self.points_no_dupl = self.points.drop_duplicates()
-
-        if dist_func is None:
-            self.DistFunc = DistFunction(
-                dist_metric="euclidean",
-                norm_order=2,
-                vector_dist_func=None,
-                cache_points=self.points
-            )
-        elif isinstance(dist_func, DistFunction):
-            dist_func.check_if_all_dists_are_cached()
-
-            empty_cache_check = dist_func.num_of_nan_in_cache() >= len(self.points.index)*len(self.points.columns)
-
-            if empty_cache_check and not dist_func.check_cache_compatibility(self.points):
-                print("pam_line_723")
-                print("Creating new cache")
-                dist_func.df_to_cache(df=self.points)
-
-            self.DistFunc = dist_func
-
-        self.dist_metric = self.DistFunc.dist_metric
-        self.norm_order = self.DistFunc.norm_order
-        self.dist_func_1d = self.DistFunc.dist_func_0d
-        self.dist_func = self.DistFunc.dist_func
-        self.dist_func_cache = self.DistFunc.dist_func_cache
-
-        # self.cp_cand_num = self.choose_max_num_of_medoid_candidates(n_cp_cand=cp_cand_num)
+        self.data_set_up(dim_redux=dim_redux, dist_func_obj=dist_func_obj, dist_metric=dist_metric, norm_ord=norm_ord)
 
         self.idx_min_dist_to_im_st_p = pd.Index([])
-        self.candidate_st_p = self.select_candidate_starting_points(method=self.st_p_method)
-        self.st_p_df_list = self.select_n_sets_of_unique_starting_points(n_sets=self.n_init)
-        self.starting_points_df = pd.DataFrame()
+        self.candidate_st_p: pd.DataFrame | None = None
+        self.st_p_df_list = []
 
+        self.set_up_iter_starting_points(print_init_cost=True)
+
+        self.starting_points_df = pd.DataFrame()
         self.PamCore: PamCore | None = None
         self.cost_metrics = pd.DataFrame()
 
         self.select_best_pam_of_st_points()
-        # self.test_dists_cache_method()
 
         self.labels = pd.Series()
         self.medoids = pd.DataFrame()
         self.data_df = pd.DataFrame()
         self.clusters_df = pd.DataFrame()
-        self.clusters_dict = {}
         self.inertia: float | None = None
 
         self.set_up_res_from_pam_core(pam_core=self.PamCore)
-
-    def print_clusters_point_count(self):
-        print(f"Number of n_clusters created: {len(self.clusters_dict.keys())}")
-        for key, cl_df in self.clusters_dict.items():
-            print(f"Cluster with center '{key}' has {cl_df.shape[0]} data_pd")
 
     def print_starting_points(self):
         print("Line 246 pam")
@@ -128,17 +98,15 @@ class Kmedoids:
         print(f"Num of points: {self.num_of_points}")
         print(f"Num of dimensions: {self.num_of_dimensions}")
         print(f"Dimensions after reduction: {len(self.points.columns)}, redux: {self.dim_redux}")
-        print(f"Multi-index data: {self.m_idx_merge}")
         print(f"Max number of iterations (loops): {self.max_num_of_iter}")
         print("---")
-        print(f"1d distance function passed (bool): {self.dist_func_1d is None}")
-        print(f"Distance metric: {self.dist_metric}")
-        print(f"Norm order: {self.norm_order}")
+        print(f"1d distance function passed (bool): {self.DistFunc.dist_func_1d is None}")
+        print(f"Distance metric: {self.DistFunc.dist_metric}")
+        print(f"Norm order: {self.DistFunc.norm_order}")
         print("---")
         print("Candidate center points options")
-        print(f"Max number of candidate cluster medoids: {self.cand_options['n_cp_cand']}")
-        print(f"Imaginary center point method is the geometric median aprox: {self.cand_options['g_median']}")
-        print(f"Imaginary center point method is power mean of order: {self.cand_options['p_mean_ord']}")
+        print(f"Max number of candidate cluster medoids: {self.PamCore.n_cp_cand}")
+        print(f"Imaginary center point method: {self.PamCore.im_mid_type}")
         print("---")
         print(f"Starting points selection method: {self.st_p_method}")
         print(f"Starting medoids passed: {self.starting_points}")
@@ -156,7 +124,6 @@ class Kmedoids:
         self.print_cl_type()
         print("---")
         print(self.medoids)
-        self.print_clusters_point_count()
         print(self.labels)
         print("---")
 
@@ -207,49 +174,31 @@ class Kmedoids:
         self.starting_points_df = self.select_starting_points()
         self.print_starting_points()
 
+    def print_init_config_cost(self):
+        print("Initial starting points configuration cost")
+        print(f"Initialization method: {self.st_p_method}")
+        print(f"Starting points: {self.st_p_method}")
+        print(self.st_p_df_list)
+        print(f"Cost:")
+        print(self.calc_init_cp_cost(self.st_p_df_list))
+
     def __repr__(self):
         # self.print_all_iter_per_table()
         # self.print_all_tables_per_iter()
         self.print_selected()
         return "Kmedoids object"
 
-    @classmethod
-    def from_dist_vars(
-            cls, data, n_clusters: int, dim_redux: int = None,
-            n_init: int = 10, starting_points: list = None, im_st_points=None, st_p_method=None,
-            dists_p_norm=1, cand_options=None, max_iter: int = None,
-            dist_func_1d: callable = None, dist_metric=None, norm_order=None):
-
-        return cls(
-            data=data,
-            n_clusters=n_clusters,
-            dim_redux=dim_redux,
-            n_init=n_init,
-            starting_points=starting_points,
-            im_st_points=im_st_points,
-            st_p_method=st_p_method,
-            dist_func=DistFunction(
-                vector_dist_func=dist_func_1d,
-                dist_metric=dist_metric,
-                norm_order=norm_order,
-                cache_points=None,  # points inserted inside object
-            ),
-            dists_p_norm=dists_p_norm,
-            cand_options=cand_options,
-            max_iter=max_iter)
-
     def set_up_res_from_pam_core(self, pam_core=None):
         pam_core = mf.def_var_value_if_none(pam_core, default=self.PamCore)
 
-        self.labels = self.set_mult_idx_labels_from(pam_core.res_labels)
-        self.medoids = self.set_mult_idx_labels_from(pam_core.res_cps_df)
+        cps = pam_core.res_cps_df
+        self.labels = pam_core.labels
         self.data_df = pd.DataFrame(self.data, index=self.labels.index)
+        self.medoids = self.data_df.loc[cps.index]
         self.clusters_df = gpd.add_1st_lvl_index_to_df(self.data_df, self.labels, index_name="medoid").sort_index()
-        self.clusters_dict = {idx: df for idx, df in self.clusters_df.groupby(level=0)}
-        # self.clusters_dict = dict(pd.concat([self.data_df, self.labels.rename("medoid")], axis=1).groupby(["medoid"]))
-        # self.clusters_df = pd.concat([df for df in self.clusters_dict], keys=self.clusters_dict.keys())1
         self.inertia = pam_core.final_config_cost
 
+    @mf.print_execution_time
     def select_best_pam_of_st_points(self):
         # self.print_test_random_st_p_selection()
         pam_core_list = []
@@ -259,15 +208,14 @@ class Kmedoids:
         for st_p_df in self.st_p_df_list:
             print("pam_line_270")
             print(f"starting points \n{st_p_df.index}")
-            print(self.points.loc[st_p_df.index].drop_duplicates())
-            print(f"num of np.nan: ", self.DistFunc.num_of_nan_in_cache())
+            # print(self.points.loc[st_p_df.index].drop_duplicates())
+            # print(f"num of np.nan: ", self.DistFunc.num_of_nan_in_cache())
 
             pam_core_res = PamCore.from_k_medoids_obj(
                 k_medoids_obj=self,
                 starting_medoids=st_p_df,
                 dist_func=self.DistFunc.distance_func_cache_all
             )
-            print(f"num of np.nan: ", self.DistFunc.num_of_nan_in_cache())
             pam_core_list += [pam_core_res]
             inertia_list += [pam_core_res.CDMetrics.inertia]
             distortion_list += [pam_core_res.CDMetrics.distortion]
@@ -298,58 +246,40 @@ class Kmedoids:
         self.starting_points_df = self.st_p_df_list[best_idx]
         self.PamCore: PamCore = pam_core_list[best_idx]
 
-    def test_dists_cache_method(self):
-        dist_cache_methods = {
-            # "no_caching": lambda a, b, bl=False: self.DistFunc.distance_func_cache(a, b, bl),
-            # "medoids": lambda a, b, bl=True: self.DistFunc.distance_func_cache_medoids(a, b, bl),
-            # "recursion": lambda a, b, bl=True: self.DistFunc.distance_func_cache_na_plus(a, b, bl),
-            # "drop_na": lambda a, b, bl=True: self.DistFunc.distance_func_cache_drop_na(a, b, bl),
-            "calc_all": lambda a=None, b=None, bl=True: self.DistFunc.distance_func_cache_all(a, b, bl),
-            # "elem_wise": lambda a, b, bl=True: self.DistFunc.distance_func_cache_element_wise(a, b, bl),
-        }
+    def data_set_up(self, dim_redux: int = None, dist_func_obj: DistFunction=None, dist_metric=None, norm_ord=None):
+        data_df = pd.DataFrame(self.data, dtype="float32")
 
-        res_dict = {}
-        for key in dist_cache_methods:
-            self.dist_func_cache = dist_cache_methods[key]
-            self.DistFunc.delete_cache()
+        if dim_redux is not None:
+            # TODO PCoA method for all dist functions
+            data_df = gdp.apply_pca(dataframe=data_df, remaining_dim=dim_redux)
 
-            st_time = time()
-            st_p_time = process_time()
+        if dist_func_obj is None:
+            self.DistFunc = DistFunction(
+                dist_metric=dist_metric,
+                norm_order=norm_ord,
+                vector_dist_func=None,
+                cache_points=data_df
+            )
+        elif isinstance(dist_func_obj, DistFunction):
+            if not dist_func_obj.check_cache_compatibility(data_df):
+                print("ckm_line_76")
+                print("Creating new cache")
+                print(f"Points index: {data_df.index}")
+                print(f"Old cache index: {dist_func_obj.dists_matrix_cache.index}")
+                dist_func_obj.df_to_cache(df=data_df, calc_dists_matrix=True)
+            else:
+                print("ckm_line_82")
+                print("DistFunc object cache is compatible")
 
-            self.select_best_pam_of_st_points()
+            self.DistFunc = dist_func_obj
 
-            end_time = time()
-            end_p_time = process_time()
+        elif isinstance(dist_func_obj, pd.DataFrame) and dist_func_obj.shape[0] == dist_func_obj.shape[1]:
+            self.DistFunc = DistFunction.set_up_from_dist_matrix(
+                dist_func_obj, dist_metric=dist_metric, norm_order=norm_ord
+            )
 
-            res_dict[key] = [end_time - st_time, end_p_time - st_p_time]
-
-        mf.print_dictionary(res_dict)
-        print(pd.DataFrame(res_dict, index=["time", "processing_time"]).T)
-
-    @staticmethod
-    def merge_points_idx_if_m_index_data(data, sep_str):
-        multi_index = False
-        if isinstance(data.index, pd.MultiIndex):
-            multi_index = True
-
-        data_df = gpd.merge_data_pd_multi_index(data, sep_str=sep_str, index_name=None)
-
-        return data_df, multi_index
-
-    def prepare_points_df_from_data(self, dim_redux: int = None):
-        # data_df, self.m_idx_merge = self.merge_points_idx_if_m_index_data(self.data, sep_str=self.merge_sep_str)
-
-        data_df = pd.DataFrame(self.data) if not isinstance(self.data, pd.DataFrame | pd.Series) else self.data
-
-        data_df = data_df.astype("float32")
-
-        if dim_redux is None:
-            return data_df
-
-        # TODO PCoA method for all dist functions
-        data_df = gdp.apply_pca(dataframe=data_df, remaining_dim=dim_redux)
-
-        return data_df
+        self.points = data_df
+        self.points_no_dupl = data_df.drop_duplicates()
 
     def select_st_p_from_convex_hull(self, dim=3):
         """
@@ -380,7 +310,7 @@ class Kmedoids:
         return self.points_no_dupl.loc[labels.isin([1])]
 
     @staticmethod
-    def plus_plus(ds, k, random_state=42):
+    def plus_plus(ds, k, random_state=42, rtn_idx=True):
         """
         Create cluster centroids using the k-means++ algorithm.
         Parameters
@@ -398,6 +328,7 @@ class Kmedoids:
 
         np.random.seed(random_state)
         centroids = [ds[0]]
+        int_idx = [0]
 
         for _ in range(1, k):
             dist_sq = np.array([min([np.inner(c - x, c - x) for c in centroids]) for x in ds])
@@ -411,19 +342,101 @@ class Kmedoids:
                     break
 
             centroids.append(ds[i])
+            int_idx.append(i)
 
-        return np.array(centroids)
+        if rtn_idx:
+            return int_idx
+        else:
+            return np.array(centroids),
 
-    def select_candidate_starting_points(self, method: str = None):
-        if method is None:
-            return self.points_no_dupl
+    def random_min_cost_st_p_method(self):
+        cost = np.inf
+        int_idx_min_cp_list = None
+        dist_matrix = self.DistFunc.distance_func_cache_all().loc[self.points_no_dupl.index]
+        for _ in range(20):
+            int_idx = np.random.choice(len(self.points_no_dupl.index), size=self.num_of_clusters, replace=False)
+            r_cost = np.sum(np.min(
+                np.abs(dist_matrix.iloc[int_idx].values), axis=0
+            ) ** self.dists_norm_ord)
+            if cost > r_cost:
+                cost = r_cost
+                int_idx_min_cp_list = int_idx
+        return self.points_no_dupl.iloc[int_idx_min_cp_list]
 
-        if method == "convex_hull":
-            return self.select_st_p_from_convex_hull(dim=3)
-        elif method == "kmeans++":
-            return self.find_closest_points_to_im_centers(
-                self.plus_plus(self.points_no_dupl, self.num_of_clusters)
+    @mf.print_execution_time
+    def pam_build_st_p_method(self):
+        dist_matrix = self.DistFunc.distance_func_cache_all()
+        first_cp = dist_matrix.sum().idxmin()
+        d_nearest = dist_matrix[first_cp].values
+
+        dist_matrix = dist_matrix.values
+        center_points = [first_cp]
+        for _ in range(1, self.num_of_clusters):
+            min_cost = 0
+            min_cp = None
+            for cp in range(len(dist_matrix)):
+                if cp in center_points:
+                    continue
+                idx = dist_matrix[cp] < d_nearest
+                cp_cost = np.sum(dist_matrix[cp][idx] - d_nearest[idx])
+                if min_cost > cp_cost:
+                    min_cost = cp_cost
+                    min_cp = cp
+
+            # Update nearest distances
+            center_points += [min_cp]
+            min_cp_dists = dist_matrix[min_cp]
+            d_nearest = np.array(
+                [np.min((min_cp_dists[i], d_nearest[i])) for i in range(len(d_nearest))]
             )
+        return self.points.loc[center_points]
+
+    def calc_init_cp_cost(self, cps_df_list):
+        dist_matrix = self.DistFunc.distance_func_cache_all()
+        return [
+            np.sum(np.min(
+                np.abs(dist_matrix.loc[cp_comb.index].values), axis=0
+            ) ** self.dists_norm_ord)
+            for cp_comb in cps_df_list
+        ]
+
+    @mf.print_execution_time
+    def set_up_iter_starting_points(self, print_init_cost=False):
+        if self.st_p_method == "pam_build":
+            self.st_p_df_list = [self.pam_build_st_p_method() for _ in range(self.n_init)]
+        elif self.st_p_method == "kmeans++":
+            st_p_df_list = []
+            for i in range(self.n_init):
+                int_idx = self.plus_plus(self.points_no_dupl.values, self.num_of_clusters)
+                st_p_df_list.append(self.points_no_dupl.iloc[int_idx])
+            self.st_p_df_list = st_p_df_list
+        elif self.st_p_method == "rand_min_cost":
+            self.st_p_df_list = [self.random_min_cost_st_p_method() for _ in range(self.n_init)]
+        elif self.st_p_method == "convex_hull":
+            self.candidate_st_p = self.select_st_p_from_convex_hull(dim=3)
+            self.st_p_df_list = self.select_n_st_p_sets_from_candidates(self.candidate_st_p)
+        else:
+            self.st_p_df_list = self.select_n_st_p_sets_from_candidates(self.points_no_dupl)
+
+        if print_init_cost:
+            self.print_init_config_cost()
+
+    def find_closest_points_to_im_centers(self, vector_list):
+        return pd.Index(self.DistFunc.dist_func(self.points, vector_list).idxmin(axis=0).squeeze().unique())
+
+    def convert_st_points_passed_to_index(self, idx_list, vector_list):
+        if vector_list is not None:
+            self.idx_min_dist_to_im_st_p = self.find_closest_points_to_im_centers(vector_list)
+
+        if idx_list is None:
+            return self.idx_min_dist_to_im_st_p
+        elif all(isinstance(st, int) for st in idx_list):
+            return self.points.iloc[mf.unique_list_vals_filter(
+                flt_func=lambda x: x < self.num_of_points,
+                list_of_vals=idx_list
+            )].index.union(self.idx_min_dist_to_im_st_p)
+        else:
+            return self.points.index.intersection(idx_list).union(self.idx_min_dist_to_im_st_p)
 
     @classmethod
     def choose_n_priority_no_replace(cls, first: pd.DataFrame, second: pd.DataFrame, third: pd.DataFrame, num):
@@ -448,40 +461,6 @@ class Kmedoids:
             return pd.concat([first, cls.choose_n_priority_no_replace(
                 first=_2_not_in_1_, second=_3_not_in_1_, third=pd.DataFrame(), num=remaining)])
 
-    def find_closest_points_to_im_centers(self, vector_list):
-        return pd.Index(self.dist_func(self.points, vector_list).idxmin(axis=0).squeeze().unique())
-
-    def convert_st_points_passed_to_index(self, idx_list, vector_list):
-        if vector_list is not None:
-            self.idx_min_dist_to_im_st_p = self.find_closest_points_to_im_centers(vector_list)
-
-        if idx_list is None:
-            idx_slt = self.idx_min_dist_to_im_st_p
-
-        elif all(isinstance(st, int) for st in idx_list):
-            idx_slt = self.points.iloc[mf.unique_list_vals_filter(
-                flt_func=lambda x: x < self.num_of_points,
-                list_of_vals=idx_list
-            )].index.union(self.idx_min_dist_to_im_st_p)
-
-        elif all(isinstance(st, (str, tuple, pd.Index, pd.MultiIndex)) for st in idx_list):
-            idx_slt = self.points.loc[self.points.index.isin(idx_list)].index.union(self.idx_min_dist_to_im_st_p)
-
-        else:
-            idx_slt = self.points.loc[self.points.index.isin(idx_list)].index.union(self.idx_min_dist_to_im_st_p)
-
-        """
-        print("pam line 381 ")
-        print(idxs)
-        if self.im_st_points is not None:
-            print(self.dist_func(self.points, self.im_st_points))
-            print(self.dist_func(self.points, self.im_st_points).sort_values(by=[0]))
-            print(self.dist_func(self.points, self.im_st_points).sort_values(by=[1]))
-            print(self.dist_func(self.points, self.im_st_points).idxmin(axis=0))
-        print(idx_slt)
-        """
-        return idx_slt
-
     def select_starting_points(self, candidate_st_p=None):
         cand_st_p = mf.def_var_value_if_none(value_passed=candidate_st_p, default=self.candidate_st_p)
 
@@ -502,63 +481,68 @@ class Kmedoids:
                 first=self.points.iloc[flt_st_list],
                 second=self.candidate_st_p, third=self.points, num=self.num_of_clusters)
         """
-        if idx_slt.empty:
+
+        first_priority = None
+        if not (idx_slt.empty or idx_slt is None):
+            try:
+                first_priority = self.points_no_dupl.loc[idx_slt]
+            except KeyError:
+                print("Selected points have duplicates, they are discarded.")
+
+        if first_priority is None:
             return self.choose_n_priority_no_replace(
-                first=cand_st_p, second=self.points_no_dupl, third=pd.DataFrame(), num=self.num_of_clusters)
+                first=cand_st_p, second=self.points_no_dupl, third=pd.DataFrame(), num=self.num_of_clusters
+            )
 
         return self.choose_n_priority_no_replace(
-            first=self.points_no_dupl.loc[idx_slt],
-            second=cand_st_p, third=self.points_no_dupl, num=self.num_of_clusters)
-
-    def select_n_sets_of_unique_starting_points(self, n_sets, n_unique=None):
-        n_unique = min(
-            mf.def_var_value_if_none(value_passed=n_unique, def_func=lambda: math.ceil(self.num_of_clusters*2/3)),
-            self.num_of_clusters
+            first=first_priority, second=cand_st_p, third=self.points_no_dupl, num=self.num_of_clusters
         )
 
-        n_set_df_list = []
-        remaining_cand = self.candidate_st_p.copy()
-        for i in range(n_sets):
-            n_set_df_list += [self.select_starting_points(remaining_cand)]
-            excluded_cand_idx = mf.select_n_random_rows_from_df(n_set_df_list[-1], n_row=n_unique).index
-            remaining_cand = remaining_cand.loc[~remaining_cand.index.isin(excluded_cand_idx)]
-            """
-            print("pam line 459")
-            print(excluded_cand_idx)
-            print(remaining_cand.index)
-            print(n_set_df_list[-1].index)
-            """
-        return n_set_df_list
+    def select_n_st_p_sets_from_candidates(self, candidate_st_p):
+        cand_df = def_var_value_if_none(candidate_st_p, default=self.candidate_st_p)
 
-    @staticmethod
-    def create_m_idx_df_from_merged_idx(dataframe, separation_str, names_list, drop=True):
-        # print("line 484 pam\n\n", dataframe.index)
-        idx_tuple = dataframe.index.map(lambda x: tuple(x.split(separation_str))).set_names(names_list)
-        return dataframe.reset_index(drop=drop).set_axis(idx_tuple)
+        if self.n_init == 1:
+            return [self.select_starting_points(cand_df)]
 
-    def set_mult_idx_labels_from(self, merged_idx_pd):
-        if isinstance(merged_idx_pd.index, pd.MultiIndex) or not self.m_idx_merge:
-            return merged_idx_pd
+        n_cl = self.num_of_clusters
+        n_sets = self.n_init
+
+        unique_cand = n_sets * n_cl
+        if unique_cand > len(cand_df.index):
+            np_rand_int = np.random.choice(len(cand_df.index), size=unique_cand, replace=False)
+            int_idx_list = [
+                np_rand_int[i*n_cl:(i+1)*n_cl] for i in range(n_sets)
+            ]
         else:
-            return self.create_m_idx_df_from_merged_idx(
-                dataframe=merged_idx_pd,
-                separation_str=self.merge_sep_str,
-                names_list=["DM", "post-opt"],
-                drop=True
-            )
+            int_idx_list = [
+                np.random.choice(len(cand_df.index), size=self.num_of_clusters, replace=False)
+                for i in range(n_sets)
+            ]
+
+        return [
+            self.select_starting_points(cand_df.iloc[i_idx])
+            for i_idx in int_idx_list
+        ]
 
 
 class PamCore:
+
+    im_mid_funcs_dict = {
+        "g_median": gmf.geometric_median,
+        "median": lambda x: np.median(x, axis=0),
+        "mean": lambda x: np.mean(x, axis=0)
+    }
+
     def __init__(
             self, points: pd.DataFrame, st_medoids: pd.DataFrame, dist_func: callable,
-            cand_options=None, dists_p_norm=1, max_iter=50, iter_comb=1000):
+            points_dupl: pd.DataFrame | None = None,
+            cand_options:dict[str, (int, str, bool)] = None,
+            dists_p_norm=1, max_iter=50, iter_comb=1000,
+            mid_point_approx: bool = True, break_loop: bool = False):
 
         self.points = points
-        self.points_dupl = self.points.loc[~self.points.duplicated()]
-        self.dupl_dict = {
-            idx: self.points.loc[self.points.eq(self.points.loc[idx], axis=1).all(axis=1)].index
-            for idx in self.points_dupl.index
-        }
+        self.num_of_points = len(points.index)
+        self.points_dupl = self.points.drop_duplicates if points_dupl is None else points_dupl
 
         self.st_medoids = st_medoids
         self.dist_func = dist_func
@@ -567,26 +551,34 @@ class PamCore:
 
         self.max_iter = max_iter
         self.iter_comb = iter_comb
+        self.mid_point_approx = mid_point_approx
+        self.break_loop = break_loop
 
-        if cand_options is None:
+        self.im_mid_type = None
+
+        if not isinstance(cand_options, dict):
             self.n_cp_cand = None
-            self.g_median = None
+            self.im_mid_type = None
             self.p_mean_ord = None
         else:
-            self.n_cp_cand = mf.def_var_value_if_none(cand_options["n_cp_cand"], default=5)
-            self.g_median = mf.def_var_value_if_none(cand_options["g_median"], default=False)
-            self.p_mean_ord = mf.def_var_value_if_none(cand_options["p_mean_ord"], default=1)
+            self.n_cp_cand = mf.def_var_value_if_none(cand_options.get("n_cp_cand"), default=5)
+            self.im_mid_type = mf.def_var_value_if_none(cand_options.get("im_mid_type"), default="g_median")
+            self.p_mean_ord = mf.def_var_value_if_none(cand_options.get("p_mean_ord"), default=1)
 
         self.n_cl = len(self.st_medoids.index)
         self.comb_cl_depth = 4
         self.n_cl_change = min(self.n_cl, 5)
 
-        self.cps_df_iter = []
-        self.cp_labels_sr_iter = []
+        self.replace_in_n_cl_order = False
+        # self.prl_cp_ch_order = None
+        self.prl_cp_ch_order = list(range(self.n_cl, 0, -1))  # parallel cp change order
+        # self.prl_cp_ch_order = list(range(1, self.n_cl+1))  # parallel cp change order
+        self.n_cp_change_iter = []
+
+        self.cp_names_iter = []
+        self.labels_iter = []
         self.cps_dists_matrix_iter = []
         self.config_cost_iter = []
-        self.clusters_df_iter = []
-        self.clusters_dict_iter = []
 
         self.imaginary_mid_points_iter = []
 
@@ -594,7 +586,7 @@ class PamCore:
         self.iter_run_count = 0
 
         self.res_cps_df = pd.DataFrame()
-        self.res_labels = pd.Series()
+        self.labels = pd.Series()
         self.cps_dists_matrix = pd.DataFrame()
         self.final_config_cost = None
         self.res_clusters_df = pd.DataFrame()
@@ -602,18 +594,14 @@ class PamCore:
 
         self.CDMetrics: ClDistMetrics | None = None
 
-        self.run_loop(starting_medoids=self.st_medoids)
-        if self.check_for_single_res_label():
-            return
-
-        self.create_iter_data_dict_list()
-        self.create_labels_iter_dataframe()
+        self.run_loop()
+        # self.create_iter_data_dict_list()
 
     def print_all_iter_per_table(self):
-        mf.print_list(self.cp_labels_sr_iter)
-        mf.print_list(self.clusters_dict_iter)
+        mf.print_list(self.labels_iter)
+        # mf.print_list(self.clusters_dict_iter)
         mf.print_list(self.imaginary_mid_points_iter)
-        mf.print_list(self.cps_df_iter)
+        mf.print_list(self.cp_names_iter)
 
     def print_all_tables_per_iter(self):
         for i, iter_tables in enumerate(self.iter_data):
@@ -639,382 +627,618 @@ class PamCore:
             points=mf.def_var_value_if_none(value_passed=points, default=k_medoids_obj.points),
             st_medoids=starting_medoids,
             dist_func=mf.def_var_value_if_none(value_passed=dist_func, default=k_medoids_obj.dist_func),
+            points_dupl=k_medoids_obj.points_no_dupl,
             cand_options=k_medoids_obj.cand_options,
             dists_p_norm=k_medoids_obj.dists_norm_ord,
             max_iter=k_medoids_obj.max_num_of_iter,
             iter_comb=k_medoids_obj.iter_cp_comb
         )
 
-    def create_labels_iter_dataframe(self):
-        return pd.concat([val.rename(f"cps_iter({i + 1})") for i, val in enumerate(self.cp_labels_sr_iter)])
-
     def create_iter_data_dict_list(self):
-        iter_data = []
-        for i in range(len(self.clusters_df_iter)):
-            iter_data_dict = {
-                "centers": self.cps_df_iter[i],
-                "labels": self.cp_labels_sr_iter[i],
+        self.iter_data = [
+            {
+                "centers": self.cp_names_iter[i],
+                "labels": self.labels_iter[i],
                 "cps_dists": self.cps_dists_matrix_iter[i],
-                "config_cost": self.config_cost_iter[i],
-                "cl_df": self.clusters_df_iter[i],
-                "cl_dict": self.clusters_dict_iter[i],
-                # "im_mids": self.imaginary_mid_points_iter[i]
+                "config_cost": self.config_cost_iter[i]
             }
-            iter_data += [iter_data_dict]
-        self.iter_data = iter_data
+            for i in range(len(self.labels_iter))
+        ]
 
-    """
-    def create_final_loop_result(self, new_labels_check=False):
-        print(f"Line 463\n Iter run count: {self.iter_run_count}\n len(Iter_data): {len(self.iter_data)}")
-
-        self.res_cps_df = self.cps_df_iter[-1]
-        self.res_clusters_df_dict = self.clusters_dict_iter[-1]
-        self.res_labels = self.cp_labels_sr_iter[-1]
-        self.CDMetrics = ClDistMetrics.from_pam_core_obj(self)
-
-        if not new_labels_check:
-            return
-
-        cps_dists_matrix, total_config_cost = self.calc_dists_and_total_cost_for_cps(
-            points=self.points, center_points=self.res_cps_df, dist_func=self.dist_func, dists_p_norm=self.dists_p_norm
-        )
-        res_labels_new = self.create_labels_from_cps_dist_matrix(cps_dists_matrix)
-
-        new_cld_metrics = ClDistMetrics.from_pam_core_obj(self, res_labels_new)
-
-        print("pam line 1236")
-        print(f"distortion: {self.CDMetrics.distortion}")
-        print(f"new labels distortion: {new_cld_metrics.distortion}")
-        print(f"Change in labels:")
-        print(pd.concat([self.res_labels, res_labels_new], axis=1, keys=["Iter", "New"]).apply(
-            lambda x: None if x.iloc[1] == x.iloc[0] else f"{x.iloc[0]}->{x.iloc[1]}", axis=1).dropna()
-        )
-
-        if new_cld_metrics.distortion < self.CDMetrics.distortion:
-            self.res_labels = res_labels_new
-            self.CDMetrics = new_cld_metrics
-    """
-
-    def run_loop(self, starting_medoids):
+    @mf.print_execution_time
+    def run_loop(self):
         cps_dists_matrix, total_config_cost = self.calc_dists_and_total_cost_for_cps(
             points=self.points,
-            center_points=starting_medoids,
+            center_points=self.st_medoids,
             dist_func=self.dist_func,
             dists_p_norm=self.dists_p_norm
         )
         self.set_up_configuration(cps_dists_matrix, total_config_cost)
 
-        condition = True
-        iter_count = 0
+        for i in range(self.max_iter):
+            break_loop = self.iteration_config_search_set_up(mid_point_approx=self.mid_point_approx)
+            if break_loop:
+                break
+            print(f"\n\t---::finished {i+1} iteration")
 
-        while condition:
-            cps_dists_matrix, total_config_cost = self.iteration_config_search_set_up(self.clusters_df_iter[-1])
-
-            if cps_dists_matrix is not None:
-                self.set_up_configuration(cps_dists_matrix, total_config_cost)
-
-                if iter_count == self.max_iter:
-                    condition = False
-
-            else:
-                condition = False
-
-            iter_count += 1
-            print("\n\t---::finished {} iterations".format(iter_count))
-
-        self.iter_run_count = iter_count
-        self.res_cps_df = self.cps_df_iter[-1]
-        self.res_clusters_df = self.clusters_df_iter[-1]
-        self.res_clusters_df_dict = self.clusters_dict_iter[-1]
-        self.res_labels = self.cp_labels_sr_iter[-1]
+        self.iter_run_count = len(self.labels_iter)
+        self.labels = self.labels_iter[-1]
         self.final_config_cost = self.config_cost_iter[-1]
         self.cps_dists_matrix = self.cps_dists_matrix_iter[-1]
+        self.res_cps_df = self.points.loc[self.cp_names_iter[-1]]
+
+        self.res_clusters_df = gpd.add_1st_lvl_index_to_df(
+            self.points, index_list=self.labels, index_name="centers"
+        )
         self.CDMetrics = ClDistMetrics.from_pam_core_obj(self)
+
         print(f"PAM Line 463\n Iter run count: {self.iter_run_count}")
-        print(f"len(cps_df_iter): {len(self.cps_df_iter)}")
-        print(f"len(cp_labels_sr_iter): {len(self.cp_labels_sr_iter)}")
+        print(f"Parallel number of cps to change priority: {self.prl_cp_ch_order}")
+        print(f"Parallel number of cps to change history: \n{self.n_cp_change_iter}")
         print(f"configuration cost: {self.final_config_cost}\n\n")
 
-    def check_for_single_res_label(self):
-        if len(self.cp_labels_sr_iter[-1].unique()) == 1:
-            print("\n\tOnly one label found!\nSelecting random data_pd and running again")
-            # self.select_starting_points()
-            # self.run_loop(num_of_iter=self.max_num_of_iter)
-            return True
-        else:
-            return False
-
-    def set_up_configuration(self, cps_dists_matrix, total_config_cost):
-        self.cps_dists_matrix_iter += [cps_dists_matrix]
+    @mf.print_execution_time
+    def set_up_configuration(self, cps_dists_df, total_config_cost):
+        self.cps_dists_matrix_iter += [cps_dists_df]
         self.config_cost_iter += [total_config_cost]
 
-        cp_labels_sr = self.create_labels_from_cps_dist_matrix(cps_dists_matrix)
-        self.cp_labels_sr_iter += [cp_labels_sr]
-        self.cps_df_iter += [self.points.loc[cps_dists_matrix.columns]]
+        cp_labels_sr = cps_dists_df.idxmin(axis=1)
+        self.labels_iter += [cp_labels_sr]
+        self.cp_names_iter += [list(cps_dists_df.columns)]
 
-        clusters_df = gpd.add_1st_lvl_index_to_df(self.points, index_list=cp_labels_sr, index_name="centers")
-        self.clusters_df_iter += [clusters_df]
-        self.clusters_dict_iter += [self.create_clusters_dict_from_clusters_df(clusters_df)]
-        """
-        print("pam line 1311")
-        print("cps_dists_matrix\n", cps_dists_matrix)
-        print(cps_dists_matrix.loc[cps_dists_matrix.columns])
-        print(cps_dists_matrix.min(axis=1))
-        print(cp_labels_sr.loc[cps_dists_matrix.columns])
-        """
-        if not len(cp_labels_sr.loc[cps_dists_matrix.columns].unique()) == self.n_cl:
-            print(cps_dists_matrix.columns)
-            print(self.cps_df_iter[-1])
-            print(self.cps_df_iter[-2])
+        # if not len(cp_labels_sr.loc[cps_dists_df.columns].unique()) == self.n_cl:
+        if not len(cps_dists_df.columns) == self.n_cl:
+            print(cps_dists_df.columns)
+            print(self.cp_names_iter[-1])
+            print(self.cp_names_iter[-2])
             print(len(cp_labels_sr.unique()))
             print(self.n_cl)
-            raise Exception("There are duplicate points in the data")
+            raise Exception("There are less centers than specified")
+
+    @mf.print_execution_time
+    def calc_cl_cost_of_cand_from_all_cl_points_new(self):
+        lb = self.labels_iter[-1]
+        cps = self.cp_names_iter[-1]
         """
-        print("cps_dists_matrix index:\n", cps_dists_matrix.index)
-        print(list(self.cps_df_iter[-1].index.sort_values()))
-        print(np.sort(cp_labels_sr.unique()))
-        print(list(self.clusters_df_iter[-1].index.get_level_values(0).unique().sort_values()))
-        """
-
-    def calc_cl_cost_of_cand_from_imaginary_centers(self, clusters_df, p_mean_ord=None, g_median=None, n_cand=None):
-        p_mean_ord = mf.def_var_value_if_none(p_mean_ord, default=self.p_mean_ord)
-        g_median = mf.def_var_value_if_none(g_median, default=self.g_median)
-        n_cand = mf.def_var_value_if_none(n_cand, default=self.n_cp_cand)
-
-        imaginary_mid_points = self.find_imaginary_mid_of_clusters(
-            clusters_df, p_mean_ord=p_mean_ord, geometric_median=g_median
-        )
-        self.imaginary_mid_points_iter += [imaginary_mid_points]
-
-        print("pam_line_1644")
-        print(clusters_df)
-        print(imaginary_mid_points)
-
-        dist_from_im, cl_cps_cost = self.find_n_cand_cl_cost_cps_from_im_cps(clusters_df, imaginary_mid_points, n_cand)
-        return cl_cps_cost
-
-    def calc_cl_cost_of_cand_from_all_cl_points(self, clusters_df):
         return {
-            cp: self.calc_norm_of_dists_of_points_from_cps(
-                cl_points_df=clusters_df.loc[cp],
-                cand_cps=clusters_df.loc[cp].loc[
-                    clusters_df.loc[cp].drop(cp).index.intersection(self.points_dupl.index)
-                ],
+            cp: self.calc_norm_pow_of_dists_of_points_from_cps(
+                cl_points_df=self.points.loc[lb == cp],
+                cand_cps=self.points_dupl.loc[lb == cp].drop(cp),
                 dist_func=self.dist_func,
                 dists_p_norm=self.dists_p_norm
-            ).sort_values(ascending=True)
-            for cp in self.cps_df_iter[-1].index
+            ).sort_values(ascending=True).index.to_list()
+            for cp in cps
         }
+        """
+        cps_cost = []
+        for cp in cps:
+            cl_bl = lb == cp
+            idx_cps = self.calc_norm_pow_of_dists_of_points_from_cps(
+                    cl_points_df=self.points.loc[cl_bl],
+                    cand_cps=self.points_dupl.loc[cl_bl].drop(cp),
+                    dist_func=self.dist_func,
+                    dists_p_norm=self.dists_p_norm
+                ).sort_values(ascending=True).index.to_list()
+            int_idx_cps = self.points.index.get_indexer(idx_cps)
+            cps_cost += [(idx_cps, int_idx_cps)]
 
-    def iteration_config_search_set_up(self, clusters_df):
-        print("ckm_line_808")
-        print(self.n_cp_cand)
+        return dict(zip(cps, cps_cost))
+
+    @mf.print_execution_time
+    def find_n_cp_cand_cl_cost_from_im_cps(self):
+        # find_n_cand_cl_cost_cps_from_im_cps
+        cl_cps_cost = {}
+        lb = self.labels_iter[-1]
+        cps = self.cp_names_iter[-1]
+        n_cand = self.n_cp_cand
+
+        imaginary_mid_points: pd.DataFrame = self.find_imaginary_mid_of_clusters()
+        self.imaginary_mid_points_iter += [imaginary_mid_points]
+
+        for (im_cp, row), cp in zip(imaginary_mid_points.iterrows(), cps):
+            cl_points_df: pd.DataFrame = self.points.loc[lb == cp]
+            cl_points_dupl_df: pd.DataFrame = self.points_dupl.loc[lb == cp]
+
+            dists_from_im: pd.Series = self.dist_func(cl_points_dupl_df, row)
+
+            if n_cand == 1:
+                if dists_from_im.idxmin() == cp:
+                    cl_cps_cost[cp] = ()  # To recognize the case of no new candidates for this cluster
+                else:
+                    d_idx_min = dists_from_im.idxmin()
+                    cl_cps_cost[cp] = ([dists_from_im.idxmin()], [self.points.index.get_indexer(d_idx_min)])
+            elif n_cand > 1:
+                cp_cand_idx = dists_from_im.sort_values(ascending=True).head(n_cand).index
+                cl_cps_cost[cp]: list = self.calc_norm_pow_of_dists_of_points_from_cps(
+                    cl_points_df=cl_points_df,
+                    cand_cps=cl_points_df.loc[cp_cand_idx].drop(cp),
+                    dist_func=self.dist_func,
+                    dists_p_norm=self.dists_p_norm
+                ).sort_values(ascending=True).index.to_list()
+            else:
+                # direct use of distance from imaginary point
+                cl_cps_cost[cp] = dists_from_im.drop(cp).sort_values(ascending=True).index.to_list()
+
+        return cl_cps_cost
+
+    def find_imaginary_mid_of_clusters(self):
+        np_mid_function = self.im_mid_funcs_dict[self.im_mid_type]
+
+        lb = self.labels_iter[-1]
+        cps = self.cp_names_iter[-1]
+
+        return pd.DataFrame(
+            [np_mid_function(self.points.loc[lb == cp].values) for cp in cps],
+            index=cps,
+            columns=self.points.columns
+        ) # .rename_axis("Im/ry center of cluster:")
+
+    # NOT USED
+    @staticmethod
+    def calc_norm_of_dists_of_points_from_cps(cl_points_df, cand_cps, dist_func, dists_p_norm=1):
+        return dist_func(cl_points_df, cand_cps).apply(lambda x: np.linalg.norm(x, ord=dists_p_norm))
+
+    @staticmethod
+    def calc_norm_pow_of_dists_of_points_from_cps(cl_points_df, cand_cps, dist_func, dists_p_norm=1):
+        return dist_func(cl_points_df, cand_cps).pow(dists_p_norm).sum()
+
+    def iteration_config_without_cost_aprox(self):
+        cps_dists_matrix, min_config_cost = self.check_new_config_cost_1_cp_no_cand(
+            break_loop=self.break_loop,
+        )
+        return cps_dists_matrix, min_config_cost
+
+    def iteration_config_with_cost_aprox(self):
         if isinstance(self.n_cp_cand, int):
-            cl_cps_cost = self.calc_cl_cost_of_cand_from_imaginary_centers(clusters_df)
+            print("Imaginary center point method enabled")
+            cl_cps_cost = self.find_n_cp_cand_cl_cost_from_im_cps()
         else:
-            cl_cps_cost = self.calc_cl_cost_of_cand_from_all_cl_points(clusters_df)
+            cl_cps_cost = self.calc_cl_cost_of_cand_from_all_cl_points_new()
 
-        """
-        cps_comb = self.create_all_comb_for_n_cl_cps(
-            cl_cps_cost=cl_cps_cost,
-            cps_idx=self.cps_df_iter[-1].index,
-            comb_cl_depth=self.comb_cl_depth,
-            n_cp_change=self.n_cl_change
+        cps_dists_matrix, min_config_cost = self.check_new_config_costs_by_group_of_cp_combs(
+            cl_cps_cost=cl_cps_cost, n_comb=self.iter_comb, replace_n_cl=self.replace_in_n_cl_order
         )
-        """
-        """
-        cps_comb = self.select_n_random_comb_any_cps(
-            cl_cps_cost=cl_cps_cost,
-            n_sets=10,
-            n_sets_size=15,
-            n_sets_pool=50
-        )
-        """
+        return cps_dists_matrix, min_config_cost
 
-        min_config_cps_dist, min_config_cost = self.check_new_config_costs_by_group_of_cp_combs(
-            cl_cps_cost=cl_cps_cost, n_comb=self.iter_comb
-        )
-        # cps_comb = self.create_n_comb_of_cps(cl_cps_cost=cl_cps_cost, n_comb=500)
-        # min_config_cps_dist, min_config_cost = self.check_new_config_cost_of_cps_comb(cps_comb)
+    @mf.print_execution_time
+    def iteration_config_search_set_up(self, mid_point_approx=False):
+        if mid_point_approx is True:
+            cps_dists_matrix, min_config_cost = self.iteration_config_with_cost_aprox()
+        else:
+            cps_dists_matrix, min_config_cost = self.iteration_config_without_cost_aprox()
 
-        return min_config_cps_dist, min_config_cost
+        if cps_dists_matrix is None:
+            return True     # Break iterations loop
 
-    def check_new_config_costs_by_group_of_cp_combs(self, cl_cps_cost, n_comb=500, random_factor=2):
+        self.set_up_configuration(cps_dists_matrix, min_config_cost)
+
+    @mf.print_execution_time
+    def check_new_config_costs_by_group_of_cp_combs(
+            self, cl_cps_cost, n_comb=500, random_factor=2, replace_n_cl=False
+    ):
         min_config_cost = None
-        min_config_cps_dist = None
-        num_of_cl = len(cl_cps_cost)
+        cps_dists_matrix = None
 
-        # n_cl_cps = mf.flatten_list_dimensions([[num_of_cl - k, k + 1] for k in range(math.ceil(num_of_cl / 2))])
-        n_cl_cps = list(range(num_of_cl, 0, -1))
-        # n_cl_cps = list(range(num_of_cl, num_of_cl-2, -1)) + [1]
+        if self.prl_cp_ch_order:
+            n_cl_cps = self.prl_cp_ch_order    # parallel cp change order
+            break_loop = True
+        else:
+            n_cl_cps = list(range(1, self.n_cl))
+            break_loop = False
 
         # n_cl_comb = math.ceil(n_comb / num_of_cl)
         n_cl_comb = math.ceil(n_comb / len(n_cl_cps))
 
         # comb_sample_size_fix_depth = int(n_cl_comb * random_factor / (3 ** i))
-
+        cps_comb = []
+        min_n_cp = -1
+        best_config_cost = self.config_cost_iter[-1]
+        best_cps_dists_matrix = None
         for i in n_cl_cps:
-            min_config_cps_dist, min_config_cost = self.check_new_config_cost_of_cps_comb(
-                cps_comb=mf.random_choice_2d(
-                    self.create_n_cl_random_comb(
-                        cl_cps_cost=cl_cps_cost,
-                        n_cl=i,
-                        comb_sample_size=math.ceil(num_of_cl / i),     # num_of_cl
-                        sample_size=n_cl_comb * random_factor   # 1 + (num_of_cl * (num_of_cl - i))
-                    ),
-                    size=n_cl_comb
+            if i == 1:
+                cps_dists_matrix, min_config_cost = self.check_new_config_cost_for_single_cp_change(
+                    cl_cps_cost,
+                    break_loop=self.break_loop,
+                    all_points=True
                 )
-            )
-            if min_config_cps_dist is not None:
+                """
+                print("pam_line_1037")
+                print(cps_dists_matrix)
+                print(min_config_cost)
+                print(cps_dists_matrix.columns) if cps_dists_matrix is not None else None
+                cps_dists_matrix, min_config_cost = self.check_new_config_cost_1_cp_no_cand(
+                    break_loop=False,
+                )
+                print(cps_dists_matrix.columns) if cps_dists_matrix is not None else None
+                print(min_config_cost)
+                print(cps_dists_matrix)
+                """
+                """
+                print("pam_line_1037")
+                print(cps_dists_matrix)
+                print(min_config_cost)
+                print(cps_dists_matrix.columns)
+                cps_dists_matrix, min_config_cost = self.check_new_config_cost_for_single_cp_change_old(
+                    cl_cps_cost,
+                    sample_size=n_cl_comb,
+                    exhaustive_depth=True
+                )
+                print(cps_dists_matrix.columns)
+                print(min_config_cost)
+                print(cps_dists_matrix)
+                """
+
+            else:
+                cps_comb = self.create_n_cl_random_comb(
+                    cl_cps_cost=cl_cps_cost,
+                    n_cl=i,
+                    sample_size=n_cl_comb * random_factor,  # 1 + (num_of_cl * (num_of_cl - i))
+                    # comb_sample_size = math.ceil(num_of_cl / i),  # num_of_cl
+                )
+                cps_comb = mf.random_choice_2d(cps_comb, size=n_cl_comb)
+
+                cps_dists_matrix, min_config_cost = self.check_new_config_cost_of_cps_comb(
+                    cps_comb=cps_comb, break_loop=self.break_loop
+                )
+                """
+                print("c_pam_line_871")
+                print(cps_dists_matrix)
+                print(min_config_cost)
+                print(cps_dists_matrix.columns) if cps_dists_matrix is not None else None
+                cps_dists_matrix, min_config_cost = self.check_new_config_cost_of_cps_comb_old(
+                    cps_comb=cps_comb
+                )
+                print(cps_dists_matrix.columns) if cps_dists_matrix is not None else None
+                print(cps_dists_matrix)
+                print(min_config_cost)
+                """
+
+            if cps_dists_matrix is not None:
+                # new_cps = cps_dists_matrix.columns.difference(self.cp_names_iter[-1])
+                print(f"Configuration min cost: {min_config_cost}")
+                print(f"n_cl_cps == {i}")
+                print(f"Iteration: {len(self.labels_iter)}")
+                if cps_comb:
+                    print(f"Search 'n' CP combinations: {len(cps_comb)}")
+                print(f"Previous centers: {self.cp_names_iter[-1]}")
+                print(f"New centers found: {cps_dists_matrix.columns}")
+                # print(f"new_cps: {list(new_cps)}")
+                # print(f"n_cl({self.n_cl}) == new_cps({len(new_cps)}) + fix_cps({self.n_cl - len(new_cps)})")
+                if not break_loop:
+                    if best_config_cost > min_config_cost:
+                        best_config_cost = min_config_cost
+                        best_cps_dists_matrix = cps_dists_matrix
+                        min_n_cp = i
+                else:
+                    best_config_cost = min_config_cost
+                    best_cps_dists_matrix = cps_dists_matrix
+                    min_n_cp = i
+                    break
+
+        if best_cps_dists_matrix is None:
+            return None, min_config_cost
+
+        self.n_cp_change_iter += [min_n_cp]
+
+        if break_loop:
+            # n_cl_cps.remove(min_n_cp)
+            # self.prl_cp_ch_order = [min_n_cp] + n_cl_cps
+            poss = n_cl_cps.index(min_n_cp)
+            self.prl_cp_ch_order = n_cl_cps[poss:] + n_cl_cps[:poss] if replace_n_cl else n_cl_cps[poss:]
+            print("pam_line_1043")
+            print(self.prl_cp_ch_order)
+
+        print(f"Iter {len(self.labels_iter)} configuration cost: {best_config_cost}")
+        return best_cps_dists_matrix, best_config_cost
+
+    # NOT USED
+    @mf.print_execution_time
+    def create_single_cp_change_comb_min_depth_first(self, cl_cps_cost, cp_names, depth, depth_min=0):
+        if depth is True:
+            depth = self.num_of_points
+
+        mix_cps = []
+        fixed_cps = [cp_names[:cp] + cp_names[cp + 1:] for cp in range(len(cp_names))]
+        rem_cps_int_poss = list(range(self.n_cl))
+        for d in range(depth_min, depth):
+            cp_order = np.random.choice(rem_cps_int_poss, size=len(rem_cps_int_poss), replace=False)
+            for p in cp_order:
+                cand_cps = cl_cps_cost[cp_names[p]][0]
+                if len(cand_cps) <= d:
+                    rem_cps_int_poss.remove(p)
+                    continue
+
+                mix_cps += [[cand_cps[d]] + [fixed_cps[p]]]
+
+            if not rem_cps_int_poss:
                 break
 
-        return min_config_cps_dist, min_config_cost
-
-    @staticmethod
-    def create_labels_from_cps_dist_matrix(cps_dists: pd.DataFrame):
-        return cps_dists.idxmin(axis=1).squeeze().rename("Center_points")
-
-    @staticmethod
-    def calc_dists_and_total_cost_for_cps(
-            dist_func, points: pd.DataFrame, center_points: pd.DataFrame, dists_p_norm
-    ) -> tuple[pd.DataFrame, float]:
-
-        dist_from_cps_point_df = dist_func(points, center_points).abs()
-        total_config_cost = np.sum(dist_from_cps_point_df.min(axis=1)**dists_p_norm)
-
-        return dist_from_cps_point_df, total_config_cost
-
-    @staticmethod
-    def create_clusters_dict_from_clusters_df(clusters_df):
-        return {cp: clusters_df.loc[cp] for cp in np.unique(clusters_df.index.get_level_values(0).values)}
-
-    @classmethod
-    def find_imaginary_mid_of_clusters(cls, clusters_df, p_mean_ord=1, geometric_median=True):
-        if geometric_median:
-            return pd.DataFrame([
-                pd.Series(cls.geometric_median(clusters_df.loc[cp].values), name=cp, index=clusters_df.columns)
-                for cp in clusters_df.index.get_level_values(0).unique()
-            ])  # .rename_axis("Im/ry center of cluster:")
-
-        return pd.DataFrame([
-            clusters_df.loc[cp].apply(
-                lambda col: gmf.calc_power_mean(col, p_mean_ord=p_mean_ord)
-            ).rename(cp)
-            for cp in np.unique(clusters_df.index.get_level_values(0).values)
-        ])  # .rename_axis("Im/ry center of cluster:")
-
-    @staticmethod
-    def geometric_median(X, eps=1e-5):
-        """
-        Yehuda Vardi and Cun-Hui Zhang's algorithm for the geometric median,
-        described in the paper "The multivariate L1-median and associated data depth"
-        https://www.pnas.org/doi/pdf/10.1073/pnas.97.4.1423
-        """
-
-        y = np.mean(X, 0)
-
-        while True:
-            D = cdist(X, [y])
-            nonzeros = (D != 0)[:, 0]
-
-            Dinv = 1 / D[nonzeros]
-            Dinvs = np.sum(Dinv)
-            W = Dinv / Dinvs
-            T = np.sum(W * X[nonzeros], 0)
-
-            num_zeros = len(X) - np.sum(nonzeros)
-            if num_zeros == 0:
-                y1 = T
-            elif num_zeros == len(X):
-                return y
-            else:
-                R = (T - y) * Dinvs
-                r = np.linalg.norm(R)
-                rinv = 0 if r == 0 else num_zeros / r
-                y1 = max(0, 1 - rinv) * T + min(1, rinv) * y
-
-            if euclidean(y, y1) < eps:
-                return y1
-
-            y = y1
-
-    @staticmethod
-    def calc_norm_of_dists_of_points_from_cps(cl_points_df, cand_cps, dist_func, dists_p_norm=1):
-        return dist_func(cl_points_df, cand_cps).apply(lambda x: np.linalg.norm(x, ord=dists_p_norm))
-
-    def find_n_cand_cl_cost_cps_from_im_cps(self, clusters_df, imaginary_mid_points, n_cand=None):
-
-        n_cand = mf.def_var_value_if_none(n_cand, default=self.n_cp_cand)
-        cl_cps_cost = {}
-        dist_from_im = {}
-
-        for cp in self.cps_df_iter[-1].index:
-            # print(f"pam line 1437:\ncp: {cp}\nclusters_df:\n{clusters_df}")
-            """
-            if self.n_cp_cand <= 5 or cl_len <= 5:
-                print("pam line 1385\nFound a cluster with less than 5 points\ngoing back 2 configurations")
-                self.set_up_configuration(self.cps_dists_matrix_iter[-2], self.config_cost_iter[-2])
-                imaginary_mid_points = self.find_imaginary_mid_of_clusters(
-                    self.clusters_df_iter[-1], p_mean_ord=self.p_mean_ord
-                )
-                self.imaginary_mid_points_iter += [imaginary_mid_points]
-                return self.find_n_cand_cl_cost_cps_from_im_cps(
-                    self.clusters_df_iter[-1], imaginary_mid_points
-                )
-            """
-            cl_points_df: pd.DataFrame = clusters_df.loc[cp]
-            cl_p_df_no_dupl = cl_points_df.loc[cl_points_df.drop(cp).index.intersection(self.points_dupl.index)]
-            if cl_p_df_no_dupl.empty:
-                raise Exception(
-                    f"Cluster ({cp}) is empty:\n\n{cl_points_df}\n\nduplicates: {self.points_dupl.index}\n\n"
-                )
-            print("pam_line_1822")
-            print(f"cl_points_df: {cl_points_df}\n\nduplicates: {self.points_dupl.index}")
-
-            if cl_p_df_no_dupl.shape[0] == 1:
-                # NO NEED TO CALCULATE
-                dist_from_im[cp] = pd.Series(
-                    [1],
-                    index=cl_p_df_no_dupl.index,
-                    name=f"dist from {cp}"
-                )
-                cl_cps_cost[cp] = dist_from_im[cp]
-                continue
-
-            dist_from_im[cp] = pd.Series(
-                data=self.dist_func(
-                    cl_p_df_no_dupl,
-                    imaginary_mid_points.loc[cp],
-                    False
-                ),
-                index=cl_p_df_no_dupl.index,
-                name=f"dist from {cp}"
-            ).sort_values(ascending=True)
-
-            if n_cand <= 0:
-                cl_cps_cost[cp] = dist_from_im[cp]
-                continue
-
-            cl_dist_from_im_cand_idx = dist_from_im[cp].head(min(len(cl_p_df_no_dupl.index), n_cand)).index
-            cl_cps_cost[cp] = self.calc_norm_of_dists_of_points_from_cps(
-                cl_points_df=cl_points_df,
-                cand_cps=cl_points_df.loc[cl_dist_from_im_cand_idx],
-                dist_func=self.dist_func,
-                dists_p_norm=self.dists_p_norm
-            ).sort_values(ascending=True)
-
-        return dist_from_im, cl_cps_cost
-
-    @classmethod
-    def create_all_comb_for_n_cl_cps(
-            cls, cl_cps_cost: dict, comb_cl_depth, n_cp_change):
-
-        r_cl_k = mf.random_choice_2d(matrix=list(cl_cps_cost.keys()), size=min(n_cp_change, len(cl_cps_cost.keys())))
-        # fixed_cps = list(cps_idx.difference(r_cl_k))
-
-        mix_cps = cls.create_cps_combinations(cps_to_change=r_cl_k, cl_cps_cost=cl_cps_cost, depth=comb_cl_depth)
-
         return mix_cps
+
+    # NOT USED
+    @staticmethod
+    def create_single_cp_change_comb(cl_cps_cost, depth):
+        # creates len(cl_cps_cost) X depth combinations
+        cp_names = list(cl_cps_cost.keys())
+        """
+        all_comb_one = []
+        for cp in cl_cps_cost.keys():
+            all_comb_one += cls.create_cps_combinations(
+                cps_to_change=[cp],
+                cl_cps_cost=cl_cps_cost,
+                depth=mf.def_var_value_if_none(depth, def_func=lambda: math.ceil(5 + 20 / len(cl_cps_cost.keys())))
+            )
+        return all_comb_one
+        """
+        """
+        mix_cps = []
+        # cl_change_poss = [0]
+        for cp in range(len(cp_names)):
+            # fixed_cps = list(filter(lambda x: x not in [cp], cp_names))
+            fixed_cps = cp_names[:cp] + cp_names[cp + 1:]
+            new_cps = cl_cps_cost[cp_names[cp]][:depth]
+            mix_cps += mf.all_lists_elements_combinations(new_cps, [[fixed_cps]])
+            # cl_change_poss += [cl_change_poss[-1] + len(new_cps)]
+        """
+        mix_cps = []
+        for cp in range(len(cp_names)):
+            fixed_cps = cp_names[:cp] + cp_names[cp + 1:]
+            new_cps = cl_cps_cost[cp_names[cp]][0][:depth]
+            mix_cps += [[nc] + [fixed_cps] for nc in new_cps]
+        return mix_cps
+
+    # NOT USED
+    @mf.print_execution_time
+    def check_new_config_cost_for_single_cp_change_old(self, cl_cps_cost, sample_size, exhaustive_depth=None):
+        # The sample size is the max number of samples checked in random order
+        # The exhaustive depth is the max number of samples per cluster
+
+        depth = math.ceil(sample_size / len(cl_cps_cost.keys()))  # n_comb = 2000, sample_size = 200, depth = 10
+
+        mix_cps = mf.random_choice_2d(self.create_single_cp_change_comb(cl_cps_cost, depth=depth), size=sample_size)
+
+        if exhaustive_depth:
+            mix_cps += self.create_single_cp_change_comb_min_depth_first(
+                cl_cps_cost, list(cl_cps_cost.keys()), depth=exhaustive_depth, depth_min=depth
+            )
+
+        min_config_cost = self.config_cost_iter[-1]
+        cps_dists_matrix = None
+        print(f"...{len(mix_cps)} comb checks started")
+        for i, idx_list in enumerate(mix_cps):
+            if isinstance(idx_list[-1], list):
+                idx_list = idx_list[:-1] + idx_list[-1]
+
+            cps_dists, total_cost = self.calc_dists_and_total_cost_for_cps(
+                dist_func=self.dist_func,
+                points=self.points,
+                center_points=self.points.loc[idx_list],
+                dists_p_norm=self.dists_p_norm
+            )
+            if total_cost < min_config_cost:
+                # print(f"Configuration min cost: {total_cost}")
+                min_config_cost = total_cost
+                cps_dists_matrix = cps_dists
+                print(f"Comb checks completed: {i}")
+                break
+
+        return cps_dists_matrix, min_config_cost
+
+    @staticmethod
+    def calc_2_nearest_dists_from(cps_dists_matrix, np_arrays=True):
+        cdm = cps_dists_matrix
+        n_cols = len(cdm[0])
+        n_rows = len(cdm)
+        d0_near = np.empty(shape=n_rows, dtype="float32")
+        d1_near = np.empty(shape=n_rows, dtype="float32")
+        for i in range(n_rows):
+            v1 = cdm[i, 0]
+            v2 = cdm[i, 1]
+            if v1 < v2:
+                min0 = v1
+                min1 = v2
+            else:
+                min0 = v2
+                min1 = v1
+            for j in range(2, n_cols):
+                val = cdm[i, j]
+                if val < min0:
+                    min1 = min0
+                    min0 = val
+                elif cdm[i, j] < min1:
+                    min1 = val
+            d0_near[i] = min0
+            d1_near[i] = min1
+
+        return (d0_near, d1_near) if np_arrays else (list(d0_near), list(d1_near))
+
+    def rtn_all_fixed_cps_single_case(self, cp_names: list, int_poss=True):
+        cp_int_idx = list(self.points.index.get_indexer(cp_names)) if int_poss else cp_names
+        return [cp_int_idx[:cp] + cp_int_idx[cp + 1:] for cp in range(len(cp_int_idx))]
+
+    @staticmethod
+    @njit
+    def calc_delta_of_cost(new_cps_min_cost, not_in_cl, d0_near, d1_near):
+        delta_cost = 0
+        for i in range(len(new_cps_min_cost)):
+            if not_in_cl[i]:
+                if new_cps_min_cost[i] < d0_near[i]:
+                    delta_cost += new_cps_min_cost[i] - d0_near[i]
+            else:
+                if new_cps_min_cost[i] < d1_near[i]:
+                    delta_cost += new_cps_min_cost[i] - d0_near[i]
+                else:
+                    delta_cost += d1_near[i] - d0_near[i]
+
+        return delta_cost
+
+    def rtn_config_res_for(self, min_swap, min_delta_cost, fixed_cps, counter):
+        min_cps = fixed_cps[min_swap[0]] + [min_swap[1]]
+        min_config_cost = self.config_cost_iter[-1] + min_delta_cost
+        print(f"Single cp swaps checked: {counter}")
+        print(f"Min configuration cost: {min_config_cost}")
+        return self.dist_func().iloc[:, min_cps].abs(), min_config_cost
+
+    @mf.print_execution_time
+    def check_new_config_cost_for_single_cp_change(
+            self, cl_cps_cost, sample_size=None, break_loop=True, all_points=True
+    ):
+        dists_matrix = self.dist_func().values
+        labels: np.array = self.labels_iter[-1].values
+        n_cl = self.n_cl
+        cp_names = list(cl_cps_cost.keys())
+
+        # sample_size >= depth * number_of_clusters
+        depth = self.num_of_points if sample_size is None else sample_size // len(cp_names)
+
+        d0_near, d1_near = self.calc_2_nearest_dists_from(self.cps_dists_matrix_iter[-1].values)
+
+        fixed_cps = self.rtn_all_fixed_cps_single_case(cp_names, int_poss=True)
+
+        cand_cps_list = [list(cl_cps_cost[cp_names[p]][1]) for p in range(len(cp_names))]
+
+        if all_points is True:
+            for p in range(n_cl):
+                other_points = []
+                for i in list(range(p))+list(range(p+1, n_cl)):
+                    other_points += list(cl_cps_cost[cp_names[i]][1])
+                cand_cps_list[p] += other_points
+
+        not_in_cl_list = [labels != cp_names[p] for p in range(n_cl)]
+
+        d_tol = -0.000001
+        counter = 0
+        min_delta_cost = d_tol
+        min_swap = None
+        rem_cps_int_poss = list(range(n_cl))
+        for d in range(depth):
+            # cps_to_drop = []
+            # for cp in range(len(cp_names)):
+            n = len(rem_cps_int_poss)
+            cp_order = np.random.choice(rem_cps_int_poss, size=n, replace=False) if break_loop else rem_cps_int_poss
+            for p in cp_order:
+                cand_cps = cand_cps_list[p]
+                if not len(cand_cps) > d:
+                    rem_cps_int_poss.remove(p)
+                    continue
+
+                new_cp = cand_cps[d]
+                new_cps_min_cost = dists_matrix[new_cp]
+
+                not_in_cl = not_in_cl_list[p]
+                delta_cost = self.calc_delta_of_cost(new_cps_min_cost, not_in_cl, d0_near, d1_near)
+
+                counter += 1
+
+                if delta_cost < min_delta_cost:
+                    """
+                    cps_dists_matrix = self.dist_func()[fixed_cps[cp]+[new_cp]]
+                    total_config_cost = np.sum(cps_dists_matrix.abs().min(axis=1) ** self.dists_p_norm)
+                    print("pam_line_1263")
+                    print(new_cp)
+                    print(fixed_cps)
+                    print(fixed_cps[cp]+[new_cp])
+                    print(total_config_cost)
+                    print(min_config_cost + delta_cost)
+                    """
+                    # min_cps = fixed_cps[cp] + [new_cp]  # int indexes
+                    min_swap = (p, new_cp)     # The 1st is poss to fixed_cps, the 2nd is the real new poss
+                    min_delta_cost = delta_cost + d_tol
+                    if break_loop:
+                        """
+                        min_cps = fixed_cps[min_swap[0]] + [min_swap[1]]
+                        min_config_cost = self.config_cost_iter[-1] + min_delta_cost
+                        print(f"Single cp swaps checked: {counter}")
+                        print(f"Min configuration cost: {min_config_cost}")
+                        return self.dist_func().iloc[:, min_cps].abs(), self.config_cost_iter[-1] + min_delta_cost
+                        """
+                        return self.rtn_config_res_for(min_swap, min_delta_cost, fixed_cps, counter)
+
+            """
+            if cps_to_drop:
+                for i, cp in enumerate(cps_to_drop):
+                    cp_names.pop(cp - i)
+                    fixed_cps.pop(cp - i)
+            
+            if not cp_names:
+                break
+            """
+            if not rem_cps_int_poss:
+                break
+
+        if min_swap is None:
+            print(f"Single cp swaps checked: {counter}")
+            print(f"No configuration delta greater than: {d_tol}")
+            return None, self.config_cost_iter[-1]
+
+        return self.rtn_config_res_for(min_swap, min_delta_cost, fixed_cps, counter)
+
+    @mf.print_execution_time
+    def check_new_config_cost_1_cp_no_cand(self, break_loop=True):
+        dists_matrix = self.dist_func().values
+        labels: np.array = self.labels_iter[-1].values
+        cp_names = list(self.cps_dists_matrix_iter[-1].columns)
+
+        d0_near, d1_near = self.calc_2_nearest_dists_from(self.cps_dists_matrix_iter[-1].values)
+
+        print("pam_line_1255")
+        print(d0_near)
+        print(d1_near)
+        print(np.min(self.cps_dists_matrix_iter[-1].values, axis=1))
+
+        fixed_cps = self.rtn_all_fixed_cps_single_case(cp_names, int_poss=True)
+        # not_in_cl_list = [labels != cp_names[p] for p in range(len(cp_names))]
+
+        def order_if_break_loop(n):
+            return np.random.choice(n, size=n, replace=False) if break_loop else range(n)
+
+        counter = 0
+        d_tol = -0.000001
+        min_delta_cost = d_tol
+        min_swap = None
+        for p in order_if_break_loop(len(cp_names)):
+            for new_cp in order_if_break_loop(self.num_of_points):
+                new_cps_min_cost = dists_matrix[new_cp]
+
+                not_in_cl = labels != cp_names[p]
+                delta_cost = self.calc_delta_of_cost(new_cps_min_cost, not_in_cl, d0_near, d1_near)
+
+                counter += 1
+
+                if delta_cost < min_delta_cost:
+                    """
+                    cps_dists_matrix = self.dist_func()[fixed_cps[cp]+[new_cp]]
+                    total_config_cost = np.sum(cps_dists_matrix.abs().min(axis=1) ** self.dists_p_norm)
+                    print("pam_line_1263")
+                    print(new_cp)
+                    print(fixed_cps)
+                    print(fixed_cps[cp]+[new_cp])
+                    print(total_config_cost)
+                    print(min_config_cost + delta_cost)
+                    """
+                    # min_cps = fixed_cps[cp] + [new_cp]  # int indexes
+                    min_swap = (p, new_cp)  # The 1st is poss to fixed_cps, the 2nd is the real new poss
+                    min_delta_cost = delta_cost + d_tol
+                    if break_loop:
+                        """
+                        min_cps = fixed_cps[min_swap[0]] + [min_swap[1]]
+                        min_config_cost = self.config_cost_iter[-1] + min_delta_cost
+                        print(f"Single cp swaps checked: {counter}")
+                        print(f"Min configuration cost: {min_config_cost}")
+                        return self.dist_func().iloc[:, min_cps].abs(), self.config_cost_iter[-1] + min_delta_cost
+                        """
+                        return self.rtn_config_res_for(min_swap, min_delta_cost, fixed_cps, counter)
+
+        if min_swap is None:
+            return None, self.config_cost_iter[-1]
+        """
+        min_cps = fixed_cps[min_swap[0]] + [min_swap[1]]
+        min_config_cost = self.config_cost_iter[-1] + min_delta_cost
+        print(f"Single cp swaps checked: {counter}")
+        print(f"Min configuration cost: {min_config_cost}")
+        return self.dist_func().iloc[:, min_cps].abs(), self.config_cost_iter[-1] + min_delta_cost
+        """
+        return self.rtn_config_res_for(min_swap, min_delta_cost, fixed_cps, counter)
 
     @staticmethod
     def create_cps_combinations(
@@ -1028,180 +1252,120 @@ class PamCore:
         elif len(cps_to_change) > len(cl_cps_cost):
             raise Exception("cps_to_change can not be more than the number of clusters")
 
+        def new_cps_creation():
+            return mf.all_lists_elements_combinations(*[
+                # list(cl_cps_cost[cp].index)[:depth] for cp in cps_to_change
+                cl_cps_cost[cp][0][:depth] if cl_cps_cost[cp] else [cp] for cp in cps_to_change
+            ])
+
         if len(cps_to_change) == len(cl_cps_cost):
-            return mf.all_lists_elements_combinations(*[list(cl_cps_cost[cl].index)[:depth] for cl in cps_to_change])
+            return new_cps_creation()
 
-        fixed_cps = list(filter(lambda x: x not in cps_to_change, cl_cps_cost))
+        fixed_cps = list(filter(lambda x: x not in cps_to_change, cl_cps_cost.keys()))
         if len(cps_to_change) == 1:
-            return mf.all_lists_elements_combinations(list(cl_cps_cost[cps_to_change[0]].index)[:depth], [fixed_cps])
+            cp = cps_to_change[0]
+            new_cps = cl_cps_cost[cp][0][:depth] if cl_cps_cost[cp] else cps_to_change
+            return mf.all_lists_elements_combinations(new_cps, [[fixed_cps]])
 
-        new_cps = mf.all_lists_elements_combinations(*[list(cl_cps_cost[cl].index)[:depth] for cl in cps_to_change])
-        mix_cps = mf.all_lists_elements_combinations(new_cps, [fixed_cps])
-
+        new_cps = new_cps_creation()
+        mix_cps = mf.all_lists_elements_combinations(new_cps, [[fixed_cps]])
+        """
+        print("pam_line_1052")
+        print(cl_cps_cost)
+        print(cps_to_change)
+        print(new_cps)
+        print(fixed_cps)
+        print(mix_cps)
+        """
         return mix_cps
 
     @classmethod
-    def select_n_random_comb_any_cps(
-            cls, cl_cps_cost: dict, n_sets=10, n_sets_size=20, n_sets_pool=50, single_cp_change=False):
-        """
-        depth_n_cp_pairs = [
-            (2, 10), (3, 6), (4, 5),
-            (5, 4), (6, 4),
-            (7, 3), (8, 3), (9, 3), (10, 3), (11, 3), (12, 3), (13, 3), (14, 3),
-            (15, 2), (16, 2), (17, 2), (18, 2), (19, 2), (20, 2), (21, 2), (22, 2), (23, 2), (24, 2), (25, 2),
-            (1000, 1)
-        ]   # 25 TOTAL
-        """
-        if single_cp_change:
-            return cls.create_all_comb_for_n_cl_cps(cl_cps_cost, comb_cl_depth=1000, n_cp_change=1)
-
-        depth_n_cp_pairs_slt_depth = mf.return_min_pow_of_n_num_combs(n_sets=n_sets-2, min_comb_set_size=n_sets_pool)
-
-        depth_n_cp_pairs_slt_n_cps = mf.return_min_num_of_n_power_combs(int(n_sets/2), min_comb_set_size=n_sets_pool)
-
-        depth_n_cp_pairs = pd.Series([(100, 1)]*3 + depth_n_cp_pairs_slt_depth + depth_n_cp_pairs_slt_n_cps).unique()
-
-        rand_mix_cps = []
-        for pair in depth_n_cp_pairs:
-            # print(f"pam_line_1588 : depth({pair[0]}) - centers({pair[1]})")
-            rand_mix_cps += mf.random_choice_2d(
-                matrix=cls.create_all_comb_for_n_cl_cps(
-                    cl_cps_cost,
-                    comb_cl_depth=pair[0],
-                    n_cp_change=pair[1]
-                ),
-                size=n_sets_size
-            )
-        """
-        # The correction of the fantom error 
-        cps_comb = []
-        for mix_cps in rand_mix_cps:
-            if len(mix_cps) == len(cps_idx):
-                cps_comb += [mix_cps]
-            else:
-                print("pam_line_1665: Found length missmatch in rand_mix_cps")
-                pass
-        """
-        return rand_mix_cps
-
-    @classmethod
-    def create_n_comb_of_cps(
-            cls,
-            cl_cps_cost: dict[int | str | tuple[str], pd.DataFrame],
-            n_comb: int = 500
-    ) -> list[list[int | str | tuple[str]]]:
-
-        num_of_cl = len(cl_cps_cost)
-
-        n_cl_comb = math.ceil(n_comb / num_of_cl)
-
-        all_comb_one = cls.create_all_one_cp_change_comb(
-            cl_cps_cost=cl_cps_cost,
-            depth=math.ceil(n_cl_comb / num_of_cl)
-        )
-
-        all_comb_two = cls.create_n_cl_random_comb(
-            cl_cps_cost=cl_cps_cost,
-            n_cl=2,
-            comb_sample_size=num_of_cl,
-            sample_size=2*n_cl_comb
-        )
-
-        if len(cl_cps_cost) < 3:
-            return all_comb_two + all_comb_one
-
-        all_comb_n = []
-        for i in range(len(cl_cps_cost), 2, -1):
-            all_comb_n += cls.create_n_cl_random_comb(
-                cl_cps_cost=cl_cps_cost,
-                n_cl=i,
-                comb_sample_size=num_of_cl,
-                sample_size=n_cl_comb
-            )
-
-        print("pam_line_1613")
-        print(f"num_of_cl: {num_of_cl}")
-        print(f"combinations total: {n_comb}")
-        print(f"combinations pre cluster: {n_cl_comb}")
-        print(f"{len(all_comb_one)} ~<=~ {num_of_cl * math.ceil(n_cl_comb / num_of_cl)}")
-        print(f"{len(all_comb_two)} ~<=~ {2*n_cl_comb}")
-        print(f"{len(all_comb_n)} ~<=~ {n_cl_comb*(num_of_cl - 2)}")
-        print(f"Total num of combinations {len(all_comb_one)+len(all_comb_two)+len(all_comb_n)}")
-
-        return all_comb_n + all_comb_two + all_comb_one
-
-    @classmethod
-    def create_all_one_cp_change_comb(cls, cl_cps_cost, depth=None):
-        # creates len(cl_cps_cost) X depth combinations
-
-        all_comb_one = []
-        for cp in cl_cps_cost.keys():
-            all_comb_one += cls.create_cps_combinations(
-                cps_to_change=[cp],
-                cl_cps_cost=cl_cps_cost,
-                depth=mf.def_var_value_if_none(depth, def_func=lambda: math.ceil(5 + 20 / len(cl_cps_cost.keys())))
-            )
-        return all_comb_one
-
-    @classmethod
-    def create_n_cl_random_comb(cls, cl_cps_cost, n_cl: int, comb_sample_size=None, sample_size=None):
+    @mf.print_execution_time
+    def create_n_cl_random_comb(cls, cl_cps_cost, n_cl: int, sample_size: int):
         # creates n_cl X len(cl_cps_cost) X depth combinations
-        if comb_sample_size is None:
-            comb_sample_size = len(cl_cps_cost)
-        elif comb_sample_size <= 0:
-            comb_sample_size = 1
 
+        cp_names = cl_cps_cost.keys()
+
+        # The bigger the comb_sample_size the smaller the depth
         # sample_size = comb_sample_size * depth ^ n_cl
-        samples_per_comb = math.ceil(sample_size / comb_sample_size)
-
-        if len(cl_cps_cost.keys()) == n_cl:
-            return cls.create_cps_combinations(
-                cps_to_change=list(cl_cps_cost.keys()),
-                cl_cps_cost=cl_cps_cost,
-                depth=mf.return_min_num_of_pow_greater_than_min_val(
-                    power=n_cl,
-                    min_val=sample_size
-                ) - 1
-            )
-        elif n_cl == 1:
-            return cls.create_all_one_cp_change_comb(
-                cl_cps_cost, depth=math.ceil(sample_size / len(cl_cps_cost))
-            )[:sample_size]
-        # elif len(cl_cps_cost.keys()) == n_cl - 1:
-            # cps_comb = list(combinations(cl_cps_cost.keys(), n_cl))
-
-        depth = -1 + mf.return_min_num_of_pow_greater_than_min_val(power=n_cl, min_val=samples_per_comb)
-
-        cps_comb = mf.random_choice_2d(
-            list(combinations(cl_cps_cost.keys(), n_cl)),
-            size=math.ceil(sample_size / (depth ** n_cl))
-        )
-        """
-        print("pam_line_1716")
-        print(f"clusters({len(cl_cps_cost)}) - n_cl({n_cl})")
-        print(f"cps_comb({math.ceil(sample_size / (depth ** n_cl))}) >= comb_sample_size({comb_sample_size})")
-        print(f"comb_sample_size({comb_sample_size}) * depth({depth}) ^ n_cl({n_cl}) == sample_size({sample_size})")
-        print(f"cps_comp({math.ceil(sample_size / (depth ** n_cl))}) >= real cps_comb({len(cps_comb)}) >= ")
-        print(f"real cps_comb({len(cps_comb)}) >= combinations({len(list(combinations(cl_cps_cost.keys(), n_cl)))})")
-        print(f"{math.ceil(sample_size / (depth ** n_cl)) * (depth ** n_cl)} >= {sample_size}")"""
-        # samples_per_comb = depth ^ n_cl
         # comb_sample_size = math.ceil(sample_size / samples_per_comb)
+        # samples_per_comb = depth ^ n_cl
+        depth = -1 + mf.return_min_num_of_pow_greater_than_min_val(power=n_cl, min_val=sample_size)
 
-        all_comb_n = []
-        for cps in cps_comb:
-            all_comb_n += cls.create_cps_combinations(
-                cps_to_change=cps,
+        if len(cp_names) == n_cl:
+            return cls.create_cps_combinations(
+                cps_to_change=list(cp_names),
                 cl_cps_cost=cl_cps_cost,
                 depth=depth
             )
+        elif n_cl == 1:
+            mix_cps = []
+            cp_names = list(cl_cps_cost.keys())
+            depth = math.ceil(sample_size / len(cp_names))
+            for cp in range(len(cp_names)):
+                # fixed_cps = list(filter(lambda x: x not in [cp], cp_names))
+                fixed_cps = cp_names[:cp] + cp_names[cp+1:]
+                new_cps = cl_cps_cost[cp_names[cp]][0][:depth]
+                mix_cps += mf.all_lists_elements_combinations(new_cps, [[fixed_cps]])
+            """
+            return [
+                mf.all_lists_elements_combinations(
+                    cl_cps_cost[cp_names[cp]][:depth], 
+                    [cp_names[:cp] + cp_names[cp+1:]]
+                )
+                for cp in range(len(cp_names))
+            ]"""
+            return mix_cps[:sample_size]
+        elif n_cl == 0:
+            raise Exception("'n_cl' must be greater than 0")
 
-        return mf.random_choice_2d(all_comb_n, size=sample_size)
+        cps_comb = mf.random_choice_2d(
+            list(combinations(cp_names, n_cl)),
+            size=sample_size  # comb_sample_size
+        )
+        all_comb_n = []
+        poss = 0
+        for i in range(depth, 0, -1):
+            comb_sample_size = math.ceil(sample_size / (i ** n_cl))
+            all_comb_depth = [
+                cls.create_cps_combinations(
+                    cps_to_change=cps,
+                    cl_cps_cost=cl_cps_cost,
+                    depth=depth
+                )[0]
+                for cps in cps_comb[poss:poss+comb_sample_size]
+            ]
+            poss = comb_sample_size
+            all_comb_n += mf.random_choice_2d(all_comb_depth, size=math.ceil(sample_size / depth))
+            print("pam_line_1211")
+            print(f"n_cl: {n_cl} _")
+            print(f"depth: {depth} _")
+            print(f"sample_size({sample_size}) > depth^n_cl({depth ** n_cl})")
+            print(f"comb_sample_size({comb_sample_size})")
+            print(f"current depth (i): {i}, samples_per_comb (i^n_cl): {i ** n_cl}")
+            print(f"Number of combination generated (all_comb_depth): {len(all_comb_depth)}")
+        print(f"len(all_comb_n) == {len(all_comb_n)}")
+        return all_comb_n[:sample_size]
 
-    def check_new_config_cost_of_cps_comb(self, cps_comb: list):
+    @staticmethod
+    def calc_dists_and_total_cost_for_cps(
+            dist_func, points: pd.DataFrame, center_points: pd.DataFrame, dists_p_norm
+    ) -> tuple[pd.DataFrame, float]:
+
+        dists_from_cps_matrix = dist_func(points, center_points).abs()
+        total_config_cost = np.sum(dists_from_cps_matrix.min(axis=1) ** dists_p_norm)
+
+        return dists_from_cps_matrix, total_config_cost
+
+    @mf.print_execution_time
+    def check_new_config_cost_of_cps_comb_old(self, cps_comb: list):
         min_config_cost = self.config_cost_iter[-1]
-        min_config_cps_dist = None
+        cps_dists_matrix = None
         print(f"...{len(cps_comb)} comb checks started")
         for idx_list in cps_comb:
+            if isinstance(idx_list[-1], list):
+                idx_list = idx_list[:-1] + idx_list[-1]
+
             cps_dists, total_cost = self.calc_dists_and_total_cost_for_cps(
                 dist_func=self.dist_func,
                 points=self.points,
@@ -1211,14 +1375,208 @@ class PamCore:
             if total_cost < min_config_cost:
                 # print(f"Configuration min cost: {total_cost}")
                 min_config_cost = total_cost
-                min_config_cps_dist = cps_dists
+                cps_dists_matrix = cps_dists
                 break
 
-        if min_config_cps_dist is not None:
-            print(f"Configuration min cost: {min_config_cost}")
-            print(f"CP combinations of this search: {len(cps_comb)}")
-            new_cps = min_config_cps_dist.columns.difference(self.cps_df_iter[-1].index)
-            # print(f"{new_cps}")
-            print(f"n_cl({self.n_cl}) - new_cps({len(new_cps)})")
+        return cps_dists_matrix, min_config_cost
 
+    @mf.print_execution_time
+    def check_new_config_cost_of_cps_comb(self, cps_comb: list, break_loop=True):
+        min_config_cost = self.config_cost_iter[-1]
+        cps_dists_matrix_t = self.cps_dists_matrix_iter[-1].values.T
+        cps_idx_list = list(self.cps_dists_matrix_iter[-1].columns)
+        dists_matrix = self.dist_func().values
+        print(f"...{len(cps_comb)} comb checks started")
+
+        min_poss = -1
+        for i in range(len(cps_comb)):
+            idx_list = cps_comb[i]
+            if isinstance(idx_list[-1], list):
+                new_cps = idx_list[:-1]
+                fixed_cps = idx_list[-1]
+            else:
+                new_cps = idx_list
+                fixed_cps = []
+
+            if isinstance(new_cps[0], int):
+                new_cps_int = new_cps
+                fixed_cps_int = fixed_cps
+            else:
+                new_cps_int = [mf.return_int_number_of_string(i) for i in new_cps]
+                fixed_cps_int = [mf.return_int_number_of_string(i) for i in fixed_cps] if fixed_cps else []
+
+            new_cps_min_cost = dists_matrix[new_cps_int]
+
+            """
+            print("pam_line_1627")
+            print(fixed_cps_int)
+            print(cps_idx_list)
+            print(self.cps_dists_matrix_iter[-1])
+            print([i for i in range(len(cps_idx_list)) if cps_idx_list[i] in fixed_cps_int])
+            """
+
+            if fixed_cps_int:
+                mix_cps_dist_matrix = np.vstack((
+                    cps_dists_matrix_t[[i for i in range(len(cps_idx_list)) if cps_idx_list[i] in fixed_cps_int]],
+                    new_cps_min_cost
+                ))
+            else:
+                mix_cps_dist_matrix = new_cps_min_cost
+
+            total_cost = np.sum(np.min(np.abs(mix_cps_dist_matrix), axis=0) ** self.dists_p_norm)
+
+            if min_config_cost > total_cost:
+                min_poss = i
+                # print(f"Configuration min cost: {total_cost}")
+                # min_config_cost = min_config_cost + cost_dif
+                # min_config_cps_dist = min_cp_dists_sr
+                if break_loop:
+                    break
+
+        if min_poss == -1:
+            return None, min_config_cost
+
+        idx_list = cps_comb[min_poss]
+        if isinstance(idx_list[-1], list):
+            idx_list = idx_list[:-1] + idx_list[-1]
+
+        return self.calc_dists_and_total_cost_for_cps(
+            dist_func=self.dist_func,
+            points=self.points,
+            center_points=self.points.loc[idx_list],
+            dists_p_norm=self.dists_p_norm
+        )
+
+
+"""
+    @classmethod
+    @mf.print_execution_time
+    def create_n_cl_random_comb_old(cls, cl_cps_cost, n_cl: int, sample_size: int, comb_sample_size=None):
+        # creates n_cl X len(cl_cps_cost) X depth combinations
+
+        if comb_sample_size is None:
+            comb_sample_size = len(cl_cps_cost)
+        elif comb_sample_size <= 0:
+            comb_sample_size = 1
+
+        cp_names = cl_cps_cost.keys()
+
+        # The bigger the comb_sample_size the smaller the depth
+        # sample_size = comb_sample_size * depth ^ n_cl
+        # comb_sample_size = math.ceil(sample_size / samples_per_comb)
+        # samples_per_comb = depth ^ n_cl
+        samples_per_comb = sample_size if len(cp_names) == n_cl else math.ceil(sample_size / comb_sample_size)
+        depth = -1 + mf.return_min_num_of_pow_greater_than_min_val(power=n_cl, min_val=samples_per_comb)
+
+        if len(cp_names) == n_cl:
+            return cls.create_cps_combinations(
+                cps_to_change=list(cp_names),
+                cl_cps_cost=cl_cps_cost,
+                depth=depth
+            )
+        elif n_cl == 1:
+            return cls.create_all_one_cp_change_comb(
+                cl_cps_cost, depth=math.ceil(sample_size / len(cl_cps_cost))
+            )[:sample_size]
+        # elif len(cl_cps_cost.keys()) == n_cl - 1:
+            # cps_comb = list(combinations(cl_cps_cost.keys(), n_cl))
+
+        cps_comb = mf.random_choice_2d(
+            list(combinations(cp_names, n_cl)),
+            size=math.ceil(sample_size / (depth ** n_cl))   # comb_sample_size
+        )
+        """"""
+        print("pam_line_1716")
+        print(f"clusters({len(cl_cps_cost)}) - n_cl({n_cl})")
+        print(f"cps_comb({math.ceil(sample_size / (depth ** n_cl))}) >= comb_sample_size({comb_sample_size})")
+        print(f"comb_sample_size({comb_sample_size}) * depth({depth}) ^ n_cl({n_cl}) == sample_size({sample_size})")
+        print(f"cps_comp({math.ceil(sample_size / (depth ** n_cl))}) >= real cps_comb({len(cps_comb)}) >= ")
+        print(f"real cps_comb({len(cps_comb)}) >= combinations({len(list(combinations(cl_cps_cost.keys(), n_cl)))})")
+        print(f"{math.ceil(sample_size / (depth ** n_cl)) * (depth ** n_cl)} >= {sample_size}")
+        """"""
+        print("pam_line_1190")
+        print(f"cps combinations that will change: {len(cps_comb)}")
+        print(f"number of cps in combinations: {len(cps_comb[0])} == {n_cl}")
+        print(f"Depth of new cps comb in changed clusters: {depth}")
+        print(f"Max number of comb: {(depth ** n_cl) * len(cps_comb)} >~= {sample_size}")
+
+        all_comb_n = [
+            cls.create_cps_combinations(
+                cps_to_change=cps,
+                cl_cps_cost=cl_cps_cost,
+                depth=depth
+            )[0]
+            for cps in cps_comb
+        ]
+
+        return mf.random_choice_2d(all_comb_n, size=sample_size)
+
+    @staticmethod
+    @njit(fastmath=True)
+    def check_config_cost_of_cp_combs(
+            cps_comb: np.ndarray,
+            dist_matrix: np.ndarray,
+            min_config_cost: float,
+            dists_p_norm: int
+    ):
+        min_config_cost = min_config_cost
+        poss = -1
+        for k in np.arange(len(cps_comb)):
+            # center_points = points.loc[idx_list]
+            # centers_idx = np.array([int(cp[3:])-1 for cp in cps_comb[i]])
+            centers_idx = cps_comb[k]
+            comb = cps_comb[k]
+            if not isinstance(comb[0], int):
+                for cp in range(len(comb)):
+                    cp_name = comb[cp]
+                    cp_int = ""
+                    str_poss = 0
+                    for i in cp_name:
+                        if isinstance(i, int):
+                            break
+                        str_poss += 1
+                    for i in range(len(cp_name)-str_poss):
+                        cp_int += cp_name[i]
+                    centers_idx[cp] = int(cp_int) - 1
+
+            # dist_from_cps_point_df = dist_func(points, center_points).abs()
+            # dist_from_cps_point_df = abs(dist_matrix[centers_idx])
+            # total_config_cost = np.sum(dist_from_cps_point_df.min(axis=1) ** dists_p_norm)
+            total_config_cost = 0
+            for i in prange(len(dist_matrix)):
+                dist_array = dist_matrix[i]
+                # row = [dist_array[centers_idx[j]] for j in range(len(centers_idx))]
+                row = dist_array[centers_idx]
+
+                row_min = row[0]
+                for j in np.arange(1, len(row)):
+                    if row_min > row[j]:
+                        row_min = row[j]
+                total_config_cost += row_min ** dists_p_norm
+
+            if total_config_cost < min_config_cost:
+                min_config_cost = total_config_cost
+                poss = k
+                return poss, min_config_cost
+
+        if poss == -1:
+            return -1, min_config_cost
+        else:
+            return poss, min_config_cost
+
+    @mf.print_execution_time
+    def check_new_config_cost_of_cps_comb_njit(self, cps_comb: list):
+        print(f"...{len(cps_comb)} comb checks started")
+        # comb: int | np.ndarray
+        poss, min_config_cost = self.check_config_cost_of_cp_combs(
+            cps_comb=np.array(cps_comb),
+            dist_matrix=self.dist_func().values,
+            min_config_cost=self.config_cost_iter[-1],
+            dists_p_norm=self.dists_p_norm
+        )
+        if poss == -1:
+            return None, min_config_cost
+
+        min_config_cps_dist = self.dist_func()[cps_comb[poss]].abs()
         return min_config_cps_dist, min_config_cost
+"""

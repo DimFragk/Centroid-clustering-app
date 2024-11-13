@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from numba import njit, prange
-from scipy.spatial.distance import squareform
+from scipy.spatial.distance import squareform, cdist, euclidean
 
 from .general_functions import def_var_value_if_none
 
@@ -181,3 +181,38 @@ def trapezoid_area_fn_diff(y_1, y_2, dx=1):
             area_dif += 0.5 * (ac_len * xp + db_len - xp * db_len) * dx
 
     return area_dif
+
+
+def geometric_median(X, eps=1e-5):
+    """
+    Yehuda Vardi and Cun-Hui Zhang's algorithm for the geometric median,
+    described in the paper "The multivariate L1-median and associated data depth"
+    https://www.pnas.org/doi/pdf/10.1073/pnas.97.4.1423
+    """
+
+    y = np.mean(X, 0)
+
+    while True:
+        D = cdist(X, [y])
+        nonzeros = (D != 0)[:, 0]
+
+        Dinv = 1 / D[nonzeros]
+        Dinvs = np.sum(Dinv)
+        W = Dinv / Dinvs
+        T = np.sum(W * X[nonzeros], 0)
+
+        num_zeros = len(X) - np.sum(nonzeros)
+        if num_zeros == 0:
+            y1 = T
+        elif num_zeros == len(X):
+            return y
+        else:
+            R = (T - y) * Dinvs
+            r = np.linalg.norm(R)
+            rinv = 0 if r == 0 else num_zeros / r
+            y1 = max(0, 1 - rinv) * T + min(1, rinv) * y
+
+        if euclidean(y, y1) < eps:
+            return y1
+
+        y = y1

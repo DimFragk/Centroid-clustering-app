@@ -65,10 +65,20 @@ class MetricsTree:
 
 def print_execution_time(func):
     def wrapper(*args, **kwargs):
-        begin = time.time()
+        time_st = time.time()
+        perf_st = time.perf_counter()
+        exec_st = time.process_time()
         res = func(*args, **kwargs)
-        end = time.time()
-        print("Total time taken in : ", func.__name__, end - begin)
+        time_end = time.time()
+        perf_end = time.perf_counter()
+        exec_end = time.process_time()
+        print(
+            f"""
+            Total time taken in fn: {func.__name__} | time: {time_end - time_st}
+            performance time: {perf_end - perf_st}
+            process_time: {exec_end - exec_st}\n
+            """
+        )
         return res
 
     return wrapper
@@ -366,6 +376,8 @@ def return_min_num_of_n_power_combs(n_sets, min_comb_set_size):
 
 
 def return_min_num_of_pow_greater_than_min_val(power, min_val, num_max=100):
+    if power < 2:
+        return min_val + 1
     for i in range(2, num_max):
         if i**power > min_val:
             return i

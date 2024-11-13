@@ -306,7 +306,7 @@ def home_page():
         - The clustering method (including settings parameters)
         - The number of clusters (k)
         
-        The project source code can be found in ([github](https://github.com/DimFragk/Centroid-clustering-app))
+        The project source code can be found in [github](https://github.com/DimFragk/Centroid-clustering-app)
         """
     )
     st.divider()
