@@ -109,29 +109,39 @@ class DistFunction:
         if self.dists_matrix_cache is None:
             self.cache_complete = False
         else:
-            self.cache_complete = self.check_df_for_na(self.dists_matrix_cache)
+            self.cache_complete = self.check_df_for_na(self.dists_matrix_cache.values)
         # self.dist_func_cache = lambda a, b, bl=self.cache_dists: self.distance_func_cache_all(a, b, bl)
         print(f"pam line 544\n cache complete: {self.cache_complete}")
         return self.cache_complete
 
     @staticmethod
-    def check_df_for_na(df):
-        return all(df.notna().apply(all))
+    @njit
+    def check_df_for_na(np_matrix: np.array):
+        # This function take ~0.004 sec for df of shape (2000, 7) with njit built included
+        for i in range(np_matrix.shape[0]):
+            for j in range(np_matrix.shape[1]):
+                val = np_matrix[i, j]
+                if np.isnan(val) or val is None:
+                    return False
+
+        # return all(df.notna().apply(all)) # This takes ~0.3 sec for df of shape (2000, 7)
+        return True
 
     def num_of_nan_in_cache(self):
         return self.dists_matrix_cache.apply(
             lambda x: x.isna().sum()
         ).sum()
 
-    def check_cache_compatibility(self, data_points):
+    @mf.print_execution_time
+    def check_cache_compatibility(self, data_points: pd.DataFrame):
         if self.dists_matrix_cache is None or self.dists_matrix_cache.empty:
             return False
-        try:
-            cache_points = self.cache_points.loc[data_points.index]
-            cache_matrix = self.dists_matrix_cache.loc[data_points.index]
-            return self.check_df_for_na(cache_matrix)
-        except KeyError:
+
+        if all(data_points.index.isin(self.dists_matrix_cache.index)):
+            return self.check_df_for_na(self.dists_matrix_cache.values)
+        else:
             return False
+
 
     def distance_metric_set_up(self, metric_passed: str, norm_order: int, vector_dist_func: Callable):
         if metric_passed is None and norm_order is None and vector_dist_func is None:
@@ -674,9 +684,13 @@ class ClMetrics:
         print("---")
 
     def __repr__(self):
+        print("\n\n---|\ncluster metrics:")
         print(self.cluster_metrics_df)
+        print("cluster metrics mean:")
         print(self.cluster_metrics_df.mean())
-        return "ClMetrics obj"
+        print("metrics_sr:")
+        print(self.metrics_sr)
+        return "\n|---\nClMetrics obj"
 
     @classmethod
     def from_k_medoids_obj(cls, kmedoids_obj, dists_p_norm=2):
@@ -686,7 +700,7 @@ class ClMetrics:
             labels=kmedoids_obj.labels,
             center_points=kmedoids_obj.medoids,  # kmedoids_obj.res_cps_df,
             clusters_df=kmedoids_obj.clusters_df,
-            dist_func=kmedoids_obj.dist_func_cache,
+            dist_func=kmedoids_obj.DistFunc.dist_func_cache,
             dist_metric=kmedoids_obj.DistFunc.dist_metric,
             dists_matrix=kmedoids_obj.DistFunc.distance_func_cache_all(),
             dists_p_norm=dists_p_norm,

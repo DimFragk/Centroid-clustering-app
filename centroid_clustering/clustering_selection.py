@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from dataclasses import dataclass
 
 import pandas as pd
 import numpy as np
@@ -11,6 +11,7 @@ from kmedoids import fasterpam
 
 import math
 from functools import partial
+from typing import Callable, Protocol
 
 import utils.general_functions as mf
 import utils.math_functions as gmf
@@ -18,12 +19,32 @@ import utils.pandas_functions as gpd
 import utils.data_processing as gdp
 import utils.visualization_functions as gvp
 
-from centroid_clustering.custom_k_medoids import Kmedoids
+from centroid_clustering.custom_k_medoids import Kmedoids, k_medoids_range
 from centroid_clustering.clustering_metrics import DistFunction, ClMetrics
 
 # from __future__ import annotations
 # import warnings
 # warnings.simplefilter(action='ignore', category=FutureWarning)
+
+
+class ClMetricsRange(Protocol):
+    def run_cl_metrics_obj_for_n_cl(self, min_n_cl: int, max_n_cl: int) -> dict[str, ClMetrics]:
+        ...
+
+
+@dataclass
+class CKMedoidsRange:
+    custom_k_medoids_set_up_func: Callable[[int, list | np.ndarray | pd.Index | pd.MultiIndex], Kmedoids]
+
+    def run_cl_metrics_obj_for_n_cl(self, min_n_cl, max_n_cl):
+        ckm_dict = k_medoids_range(
+            set_up_k_medoids=self.custom_k_medoids_set_up_func,
+            min_n_cl=min_n_cl,
+            max_n_cl=max_n_cl,
+            ascending=False
+        )
+        clm_ckm_obj_dict = {f"Cl({key})": ClMetrics.from_k_medoids_obj(ckm_obj) for key, ckm_obj in ckm_dict.items()}
+        return clm_ckm_obj_dict
 
 
 class ClSelect:
@@ -122,20 +143,26 @@ class ClSelect:
     ]
 
     def __init__(
-            self, data,
-            cl_metrics_obj_func: callable,
-            min_n_cl=2, max_n_cl=10, n_iter=10,
+            self,
+            cl_metrics_k_gen: ClMetricsRange = None,
+            cl_metrics_obj_func: Callable = None,
+            min_n_cl=2, max_n_cl=10,
             target_labels=None,
             metrics_weights: list | dict | pd.Series | None = None,
-            dist_func_obj: DistFunction = None
+            **clm_func_kwargs
     ):
+        self.clm_obj_func: Callable[[int], ClMetrics] | None = None
+        self.run_cl_metrics_obj_for_n_cl: Callable[[int, int], dict[str, ClMetrics]] = None
+        """
         self.clm_obj_func = cl_metrics_obj_func if dist_func_obj is None else partial(
             cl_metrics_obj_func, dist_func_obj=dist_func_obj
         )
-        self.data = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data).astype("float32")
+        """
+        self.set_up_functions(cl_metrics_k_gen, cl_metrics_obj_func, clm_func_kwargs)
+
+        # self.data = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data, dtype="float32")
         self.min_n_cl = min_n_cl
         self.max_n_cl = max_n_cl
-        self.n_iter = n_iter
 
         self.target_labels = target_labels
 
@@ -175,13 +202,33 @@ class ClSelect:
         clm_f = clm_f if clm_f is not None else getattr(self.clm_obj_func, "name", __default=None)
         return f"ClSelect obj(clustering_f={clm_name})\n\nlabels={self.labels_df.head(10)}\n\nclm_obj_func: {clm_f})"
 
+    def set_up_functions(self, cl_metrics_k_gen, cl_metrics_obj_func, clm_func_kwargs):
+        print("pam_line_154")
+        print(clm_func_kwargs)
+        if cl_metrics_k_gen is None and cl_metrics_obj_func is None:
+            raise Exception(
+                "One of the below input parameters must be defined:"
+                "\n - 'cl_metrics_range_func'"
+                "\n - 'cl_metrics_obj_func'"
+            )
+        elif cl_metrics_k_gen is not None:
+            self.clm_obj_func = None if cl_metrics_obj_func is None else partial(
+                cl_metrics_obj_func, **clm_func_kwargs
+            )
+            self.run_cl_metrics_obj_for_n_cl = cl_metrics_k_gen.run_cl_metrics_obj_for_n_cl
+        elif cl_metrics_obj_func is not None:
+            self.clm_obj_func = lambda k: cl_metrics_obj_func(n_clusters=k, **clm_func_kwargs)
+            self.run_cl_metrics_obj_for_n_cl = partial(
+                self.run_cl_metrics_obj_for_n_cl_default, self.clm_obj_func
+            )
+
     def set_up_metrics_weights(self, metrics_weights=None):
         metrics_names = self.n_cl_metrics.dropna().columns
         if metrics_weights is None or isinstance(metrics_weights, list):
             if isinstance(metrics_weights, list):
                 metrics_names = self.n_cl_metrics[metrics_names.isin(list)].columns
             m_names, m_weights = self.TreeWeights.weights(list(metrics_names), non_zero=False)
-            print("line_2568_pam")
+            print("pam_line_229")
             print(m_weights)
             print(m_names)
             metrics_w = pd.Series(data=m_weights, index=m_names)
@@ -235,9 +282,7 @@ class ClSelect:
         return n_cl_metrics
 
     def set_up_n_cl_run(self, min_n_cl: int, max_n_cl: int):
-        res_n_cl_obj_dict = self.run_cl_metrics_obj_for_n_cl(
-            self.clm_obj_func, self.data, min_n_cl=min_n_cl, max_n_cl=max_n_cl, n_iter=self.n_iter
-        )
+        res_n_cl_obj_dict = self.run_cl_metrics_obj_for_n_cl(min_n_cl=min_n_cl, max_n_cl=max_n_cl)
 
         labels_df = mf.extract_series_from_obj_dict(res_n_cl_obj_dict, var_name="labels").T
 
@@ -283,11 +328,10 @@ class ClSelect:
         for n_cl in kmedoids_res_n_cl_dict:
             print(f"{print_pd_crosstab(kmedoids_res_n_cl_dict[n_cl].labels, target_labels)}\n\n")
 
-
     @staticmethod
-    def run_cl_metrics_obj_for_n_cl(clm_obj_func, data, min_n_cl=2, max_n_cl=10, n_iter=10, target_labels=None):
+    def run_cl_metrics_obj_for_n_cl_default(clm_obj_func: Callable[[int], ClMetrics], min_n_cl=2, max_n_cl=10):
         return {
-            f"Cl({n_cl})": clm_obj_func(data=data, n_clusters=n_cl, max_iter=n_iter)
+            f"Cl({n_cl})": clm_obj_func(n_cl)
             for n_cl in range(min_n_cl, max_n_cl + 1)
         }
 
