@@ -112,9 +112,11 @@ class ClStgKmeans(ClSettings):
             cache_points=data
         )
         n_cl_obj = pam.ClSelect(
-            data=data,
-            cl_metrics_obj_func=partial(pam.cl_metrics_set_up_for_kms_obj, dist_func_obj=dist_func_obj, **kwargs),
-            n_iter=max_iter,
+            cl_metrics_obj_func=partial(
+                pam.cl_metrics_set_up_for_kms_obj,
+                data=data, dist_func_obj=dist_func_obj, max_iter=max_iter,
+                **kwargs
+            ),
             min_n_cl=min_n_cl,
             max_n_cl=max_n_cl
         )
@@ -145,9 +147,11 @@ class ClStgFasterPam(ClSettings):
             cache_points=data
         )
         n_cl_obj = pam.ClSelect(
-            data=data,
-            cl_metrics_obj_func=partial(pam.cl_metrics_set_up_for_faster_pam, dist_func_obj=dist_func_obj, **kwargs),
-            max_iter=max_iter,
+            cl_metrics_obj_func=partial(
+                pam.cl_metrics_set_up_for_faster_pam,
+                data=data, dist_func_obj=dist_func_obj, max_iter=max_iter,
+                **kwargs
+            ),
             min_n_cl=min_n_cl,
             max_n_cl=max_n_cl
         )

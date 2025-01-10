@@ -581,10 +581,10 @@ class ClMetrics:
         self.Cl_Method = cl_method
         self.labels = labels
         # self.labels_n = labels.apply(lambda x: list(labels.unique()).index(x))
-        self.cps_df = self.data.groupby(self.labels).mean() if center_points is None else center_points
+        self.cps_df = center_points if center_points is not None else self.data.groupby(self.labels).mean()
         self.dist_func = dist_func
         self.dist_metric = dist_metric
-        self.dists_matrix = dists_matrix.loc[self.data.index, self.data.index]
+        self.dists_matrix = dists_matrix    # dists_matrix.loc[self.data.index, self.data.index]
 
         self.dists_p_norm = dists_p_norm
         self.inertia = inertia
@@ -607,12 +607,16 @@ class ClMetrics:
         # this holds true for imaginary centers or medoids with changed names
         if isinstance(cps_dist_matrix, pd.DataFrame):
             self.cps_dist_matrix = cps_dist_matrix
-        elif self.no_im_cp_bool is True:
-            self.cps_dist_matrix = self.dists_matrix.loc[self.data.index, self.cps_df.index]
         elif medoid_le_dict is not None:
             medoid_idx = pd.Index([t for k, t in medoid_le_dict.items()])
             self.cps_dist_matrix = self.dists_matrix.loc[self.data.index, medoid_idx]
             self.cps_dist_matrix = self.cps_dist_matrix.set_axis(medoid_le_dict.keys(), axis=1)
+        elif self.no_im_cp_bool is True:
+            print(self.data)
+            print(self.data.index)
+            print(self.cps_df)
+            print(self.cps_df.index)
+            self.cps_dist_matrix = self.dists_matrix.loc[self.data.index, self.cps_df.index]
         else:
             self.cps_dist_matrix = self.dist_func(self.data, self.cps_df, False)
 
@@ -777,12 +781,24 @@ class ClMetrics:
             cls,
             data: pd.DataFrame,
             target_labels: pd.Series,
-            center_points: pd.DataFrame | None = None,
+            center_points: pd.DataFrame | list | None = None,
             dist_metric="sqeuclidean",
             dists_p_norm: int | float = 1,
             **kwargs
     ):
         dist_func_obj = DistFunction(dist_metric=dist_metric, cache_points=data, **kwargs)
+
+        cps_dist_matrix = None
+        im_cps = True
+        if isinstance(center_points, list):
+            im_cps = False
+            # "center_points" list unique values and "target_labels" pd.series unique values must be the same
+            center_points = data.loc[center_points]
+            if all([cp in center_points for cp in target_labels.unique()]):
+                raise Exception(
+                    '"center_points" list unique values and "target_labels" pd.series unique values must be the same'
+                )
+
         return cls(
             data=data,
             cl_method=None,
@@ -791,7 +807,9 @@ class ClMetrics:
             dist_func=dist_func_obj.dist_func_cache,
             dist_metric=dist_func_obj.dist_metric,
             dists_matrix=dist_func_obj.dist_func_cache(),
+            cps_dist_matrix=cps_dist_matrix,
             dists_p_norm=dists_p_norm,
+            imaginary_cps=im_cps,
         )
 
     def rtn_clm_g_data_obj(self, name=None):

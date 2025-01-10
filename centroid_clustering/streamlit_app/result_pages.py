@@ -1,6 +1,7 @@
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
+import plotly.express as px
 
 from typing import Callable, Literal
 
@@ -309,15 +310,11 @@ def show_cl_m_obj_res(
     with s_tab:
         def rtn_chart(clm_obj, metric_slt):
             sorted_df = clm_obj.samples_metrics_df.sort_values(by=["Labels", metric_slt])
-            """
-            print("pam_app_line_415")
-            print(sorted_df[metric_slt])
-            data = sorted_df[metric_slt].to_frame().reset_index()
-            data["Samples"] = data["Samples"].apply(lambda x: f"p({x})")
-            print(data["Samples"])
-            return px.bar(data, y="Samples", color="Labels", x=metric_slt, barmode='group')
-            """
-            return set_up_h_bar_chart(sorted_df[metric_slt], flip_color=True)
+            # return set_up_h_bar_chart(sorted_df[metric_slt], flip_color=True)
+            sorted_df = sorted_df[metric_slt].reset_index()
+            sorted_df["Labels"] = sorted_df["Labels"].astype(str)
+            return px.bar(sorted_df, y="Samples", color="Labels", x=metric_slt, barmode='group')
+
 
         def show_samples_charts(name:str, clm_obj:pam.ClMetrics, metric_slt:str):
             st.caption(name)
@@ -444,7 +441,7 @@ def dim_redux_3d_plots_target_labels_comp(data_obj: ClRes):
 
     dim_reduction_3d_plots(
         pam_n_cl_obj=n_cl_s_obj.n_cl_obj,
-        kms_n_cl_obj=input_obj.target_labels,
+        target_labels=input_obj.target_labels,
         pam_name=n_cl_method_key,
         kms_name="Target labels"
     )
@@ -452,7 +449,8 @@ def dim_redux_3d_plots_target_labels_comp(data_obj: ClRes):
 
 def dim_reduction_3d_plots(
         pam_n_cl_obj: pam.ClSelect,
-        kms_n_cl_obj: pam.ClSelect | pd.Series | None = None,
+        kms_n_cl_obj: pam.ClSelect | None = None,
+        target_labels: pd.Series | None = None,
         pam_name=None,
         kms_name=None,
         st_key=None
@@ -474,12 +472,12 @@ def dim_reduction_3d_plots(
         )
         con2 = st.container()
 
-    def show_3d_plots_p(n_cl_obj, name):
+    def show_3d_plots_p(n_cl_obj, name, labels=None):
         # if not list_val_df it returns the df unchanged
         # pam_data = explode_list_val_df(pam_n_cl_obj.data)
         show_3d_plots(
-            data_df=n_cl_obj.data,
-            labels_sr=n_cl_obj.labels_df[select_n_cl],
+            data_df=n_cl_obj.res_n_cl_obj_dict[select_n_cl].data,
+            labels_sr=n_cl_obj.labels_df[select_n_cl] if labels is None else labels,
             select_redux=select_redux,
             name=name,
             st_key=f"plotly_chart for: {name}-{st_key}"
@@ -489,15 +487,16 @@ def dim_reduction_3d_plots(
         with con1:
             show_3d_plots_p(pam_n_cl_obj, pam_name)
         with con2:
-            if isinstance(kms_n_cl_obj, pd.Series):
-                show_3d_plots(
-                    data_df=pam_n_cl_obj.data,
-                    labels_sr=kms_n_cl_obj,
-                    select_redux=select_redux,
-                    name="Original labels"
-                )
-            else:
-                show_3d_plots_p(kms_n_cl_obj, kms_name)
+            show_3d_plots_p(kms_n_cl_obj, kms_name)
+    elif target_labels is not None:
+        with con1:
+            show_3d_plots_p(pam_n_cl_obj, pam_name)
+        with con2:
+            show_3d_plots_p(
+                n_cl_obj=pam_n_cl_obj,
+                labels=target_labels,
+                name="Original labels"
+            )
     else:
         show_3d_plots_p(pam_n_cl_obj, pam_name)
 

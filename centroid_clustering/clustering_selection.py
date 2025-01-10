@@ -912,7 +912,7 @@ def cl_metrics_set_up_for_k_medoids(
 
 def cl_metrics_set_up_for_faster_pam(
         data, n_clusters, max_iter=100,
-        dist_metric="euclidean", norm_ord=None, dist_func_obj: DistFunction | None = None,
+        dist_metric="euclidean", norm_ord=None, dist_func_obj: DistFunction | None = None, dists_norm=1,
         **kwargs
 ) -> Callable[[], ClMetrics]:
     dist_func_obj = mf.def_var_value_if_none(dist_func_obj, def_func=lambda: DistFunction(
@@ -930,7 +930,7 @@ def cl_metrics_set_up_for_faster_pam(
         ),
         data=data,
         dist_func_obj=dist_func_obj,
-        dists_norm=1    # CHECK AGAIN: 1 OR 2
+        dists_norm=dists_norm    # CHECK default AGAIN: 1 OR 2
     )
 
 
